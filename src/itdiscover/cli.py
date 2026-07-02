@@ -493,6 +493,7 @@ def _render_html_call_section(
     representatives: list[UniqueSupportRepresentative],
 ) -> str:
     summary = (
+        ('Insertion Start', str(call.itd.insertion.start)),
         ('Tandem Start', str(call.itd.tandem_start)),
         ('Sequence', call.itd.tandem_sequence),
         ('Spacer Prefix', call.itd.spacer_prefix or "-"),
