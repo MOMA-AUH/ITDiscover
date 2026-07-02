@@ -31,5 +31,5 @@ itdiscover \
   --output report.html
 ```
 
-The `--output` flag writes an HTML report with one representative alignment per unique support pattern.
+The `--output` flag writes an HTML report with one representative alignment per called duplication.
 Primer trimming is optional and can be enabled with `--forward-primer` and `--reverse-primer`.
