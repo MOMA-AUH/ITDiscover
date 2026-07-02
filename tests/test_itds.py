@@ -239,7 +239,7 @@ def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
-        sequence="NNNCCCGGGNN",
+        sequence="TTACCCGGGACT",
         direction="forward",
     )
 
@@ -252,8 +252,8 @@ def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
         tandem_start=3,
         tandem_sequence="CCCGGG",
         orientation="downstream",
-        spacer_prefix="NNN",
-        spacer_suffix="NN",
+        spacer_prefix="TTA",
+        spacer_suffix="ACT",
     )
 
 
@@ -295,7 +295,29 @@ def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
         insertion=insertion,
         tandem_start=0,
         tandem_sequence="AAAAAA",
-        orientation="upstream",
+        orientation="downstream",
+    )
+
+
+def test_classifies_fuzzy_tandem_with_spacers_and_mismatch_in_copied_segment() -> None:
+    insertion = Insertion(
+        read_id="read-1",
+        start=2,
+        sequence="TTACCCGGAACT",
+        direction="forward",
+    )
+
+    assert classify_fuzzy_itd(
+        insertion,
+        "AAACCCGGGTTT",
+        max_mismatches=1,
+    ) == ITD(
+        insertion=insertion,
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+        spacer_prefix="TTA",
+        spacer_suffix="ACT",
     )
 
 

@@ -301,3 +301,67 @@ def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
     assert representatives[0].insert_sequence_supports[1].sequence == "CCCGGA"
     assert representatives[0].insert_sequence_supports[1].support_count == 1
     assert representatives[0].insert_sequence_supports[1].mismatches == 1
+
+
+def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        Alignment(
+            read_id="exact-fragment-1/1",
+            fragment_id="exact-fragment-1",
+            read_sequence="AAATTACCCGGGACTCCCGGGTTT",
+            aligned_read="AAATTACCCGGGACTCCCGGGTTT",
+            aligned_reference="AAA------------CCCGGGTTT",
+            direction="forward",
+        ),
+        Alignment(
+            read_id="exact-fragment-2/1",
+            fragment_id="exact-fragment-2",
+            read_sequence="AAATTACCCGGGACTCCCGGGTTT",
+            aligned_read="AAATTACCCGGGACTCCCGGGTTT",
+            aligned_reference="AAA------------CCCGGGTTT",
+            direction="forward",
+        ),
+        Alignment(
+            read_id="fuzzy-fragment/1",
+            fragment_id="fuzzy-fragment",
+            read_sequence="AAATTACCCGGAACTCCCGGGTTT",
+            aligned_read="AAATTACCCGGAACTCCCGGGTTT",
+            aligned_reference="AAA------------CCCGGGTTT",
+            direction="forward",
+        ),
+    ]
+
+    calls, representatives = call_fuzzy_itds_with_representatives(
+        alignments,
+        reference,
+        max_mismatches=1,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].support_count == 3
+    assert calls[0].itd == ITD(
+        insertion=Insertion(
+            read_id="exact-fragment-1/1",
+            fragment_id="exact-fragment-1",
+            start=2,
+            sequence="TTACCCGGGACT",
+            direction="forward",
+        ),
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+        spacer_prefix="TTA",
+        spacer_suffix="ACT",
+    )
+    assert len(representatives) == 1
+    assert representatives[0].support_count == 3
+    assert representatives[0].exact_support_count == 2
+    assert representatives[0].fuzzy_only_support_count == 1
+    assert representatives[0].fuzzy_example_sequence == "TTACCCGGAACT"
+    assert representatives[0].insert_sequence_supports[0].sequence == "TTACCCGGGACT"
+    assert representatives[0].insert_sequence_supports[0].support_count == 2
+    assert representatives[0].insert_sequence_supports[0].mismatches == 0
+    assert representatives[0].insert_sequence_supports[1].sequence == "TTACCCGGAACT"
+    assert representatives[0].insert_sequence_supports[1].support_count == 1
+    assert representatives[0].insert_sequence_supports[1].mismatches == 1

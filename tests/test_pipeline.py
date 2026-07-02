@@ -256,7 +256,7 @@ def test_call_fuzzy_itds_from_fragments_reports_support_coverage_and_vaf() -> No
                 ),
                 tandem_start=3,
                 tandem_sequence="CCCGGG",
-                orientation="upstream",
+                orientation="downstream",
             ),
             support_count=3,
             coverage=10,

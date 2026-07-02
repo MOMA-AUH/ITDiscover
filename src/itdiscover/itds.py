@@ -109,38 +109,16 @@ def classify_fuzzy_itd(
     if max_mismatches < 0:
         raise ValueError("max_mismatches must not be negative")
 
-    exact_itd = classify_exact_itd(insertion, reference)
-    if exact_itd is not None:
-        return exact_itd
-
-    similarity = score_tandem_similarity(insertion, reference)
-    if similarity is None or similarity.mismatches > max_mismatches:
-        return None
-
-    if not _is_adjacent_tandem_start(insertion, similarity.tandem_start):
-        return None
-
-    adjacent_candidates = _adjacent_tandem_candidates(insertion, reference)
-    best_adjacent_mismatches = min(candidate[2] for candidate in adjacent_candidates)
-    if sum(
-        1
-        for _, _, mismatches in adjacent_candidates
-        if mismatches == best_adjacent_mismatches
-    ) > 1:
-        return None
-
-    orientation: TandemOrientation
-    if similarity.tandem_start == insertion.start + 1:
-        orientation = "downstream"
-    else:
-        orientation = "upstream"
-
-    return ITD(
-        insertion=insertion,
-        tandem_start=similarity.tandem_start,
-        tandem_sequence=similarity.tandem_sequence,
-        orientation=orientation,
+    _validate_reference(reference)
+    match = _best_adjacent_copied_match(
+        insertion,
+        reference,
+        max_mismatches=max_mismatches,
+        min_copied_length=_MIN_COPIED_LENGTH,
     )
+    if match is None:
+        return None
+    return _itd_from_match(insertion, match)
 
 
 def _validate_reference(reference: str) -> None:
@@ -151,24 +129,42 @@ def _best_exact_copied_match(
     sequence: str,
     reference: str,
 ) -> _TandemMatch | None:
+    return _best_copied_match(
+        sequence,
+        reference,
+        max_mismatches=0,
+        min_copied_length=1,
+    )
+
+
+def _best_copied_match(
+    sequence: str,
+    reference: str,
+    *,
+    max_mismatches: int,
+    min_copied_length: int,
+) -> _TandemMatch | None:
     if not sequence:
         return None
 
     best_match: _TandemMatch | None = None
-    best_key: tuple[int, int, int] | None = None
+    best_key: tuple[int, int, int, int] | None = None
 
     for insertion_start in range(len(sequence)):
         for insertion_end in range(insertion_start + 1, len(sequence) + 1):
-            tandem_sequence = sequence[insertion_start:insertion_end]
-            if len(tandem_sequence) > len(reference):
+            copied_length = insertion_end - insertion_start
+            if copied_length < min_copied_length or copied_length > len(reference):
                 continue
-            for tandem_start in range(len(reference) - len(tandem_sequence) + 1):
+            observed = sequence[insertion_start:insertion_end]
+            for tandem_start in range(len(reference) - copied_length + 1):
                 tandem_reference = reference[
-                    tandem_start : tandem_start + len(tandem_sequence)
+                    tandem_start : tandem_start + copied_length
                 ]
-                if tandem_sequence != tandem_reference:
+                mismatches = _mismatch_count(observed, tandem_reference)
+                if mismatches > max_mismatches:
                     continue
-                key = (-len(tandem_sequence), tandem_start, insertion_start)
+                matches = copied_length - mismatches
+                key = (-matches, mismatches, tandem_start, insertion_start)
                 if best_key is None or key < best_key:
                     best_key = key
                     best_match = _TandemMatch(
@@ -176,7 +172,51 @@ def _best_exact_copied_match(
                         insertion_end=insertion_end,
                         tandem_start=tandem_start,
                         tandem_sequence=tandem_reference,
-                        mismatches=0,
+                        mismatches=mismatches,
+                    )
+
+    return best_match
+
+
+def _best_adjacent_copied_match(
+    insertion: Insertion,
+    reference: str,
+    *,
+    max_mismatches: int,
+    min_copied_length: int,
+) -> _TandemMatch | None:
+    sequence = insertion.sequence
+    if not sequence:
+        return None
+
+    best_match: _TandemMatch | None = None
+    best_key: tuple[int, int, int, int] | None = None
+
+    for insertion_start in range(len(sequence)):
+        for insertion_end in range(insertion_start + 1, len(sequence) + 1):
+            copied_length = insertion_end - insertion_start
+            if copied_length < min_copied_length or copied_length > len(reference):
+                continue
+            observed = sequence[insertion_start:insertion_end]
+            for tandem_start in _adjacent_tandem_starts(insertion.start, copied_length):
+                if tandem_start < 0 or tandem_start + copied_length > len(reference):
+                    continue
+                tandem_reference = reference[
+                    tandem_start : tandem_start + copied_length
+                ]
+                mismatches = _mismatch_count(observed, tandem_reference)
+                if mismatches > max_mismatches:
+                    continue
+                matches = copied_length - mismatches
+                key = (-matches, mismatches, tandem_start, insertion_start)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_match = _TandemMatch(
+                        insertion_start=insertion_start,
+                        insertion_end=insertion_end,
+                        tandem_start=tandem_start,
+                        tandem_sequence=tandem_reference,
+                        mismatches=mismatches,
                     )
 
     return best_match
@@ -217,6 +257,13 @@ def _is_adjacent_tandem_start(insertion: Insertion, tandem_start: int) -> bool:
     return tandem_start in (
         insertion.start - sequence_length + 1,
         insertion.start + 1,
+    )
+
+
+def _adjacent_tandem_starts(insertion_start: int, copied_length: int) -> tuple[int, int]:
+    return (
+        insertion_start - copied_length + 1,
+        insertion_start + 1,
     )
 
 

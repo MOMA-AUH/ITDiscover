@@ -377,6 +377,10 @@ def _collect_fuzzy_itd_support(
 
             key = _itd_call_key(itd)
             expected_sequence = _expected_insertion_sequence(itd)
+            sequence_mismatches = _sequence_mismatches(
+                insertion.sequence,
+                expected_sequence,
+            )
             grouped_itds[key].append(itd)
             signature = _support_signature(
                 alignment,
@@ -393,22 +397,13 @@ def _collect_fuzzy_itd_support(
             fragment_ids_by_signature[key][signature].add(alignment.fragment_id)
             insert_sequences_by_fragment[key][alignment.fragment_id][
                 insertion.sequence
-            ] = _sequence_mismatches(insertion.sequence, expected_sequence)
+            ] = sequence_mismatches
 
-            exact_itd = classify_exact_itd(insertion, reference)
-            if exact_itd is not None:
-                exact_key = _itd_call_key(exact_itd)
-                exact_signature = _support_signature(
-                    alignment,
-                    exact_itd,
-                    reference,
-                    flank_size=exact_itd.length,
+            if sequence_mismatches == 0:
+                exact_fragment_ids_by_signature[key][signature].add(
+                    alignment.fragment_id
                 )
-                if exact_key == key and exact_signature == signature:
-                    exact_fragment_ids_by_signature[key][signature].add(
-                        alignment.fragment_id
-                    )
-                    continue
+                continue
 
             fuzzy_example_sequence_by_signature[key].setdefault(
                 signature,
