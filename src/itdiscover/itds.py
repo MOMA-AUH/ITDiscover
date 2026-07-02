@@ -1,6 +1,5 @@
 """FLT3 internal tandem duplication classification."""
 
-from dataclasses import replace
 from dataclasses import dataclass
 from typing import Literal
 
@@ -8,6 +7,7 @@ from .insertions import Insertion
 from .sequences import validate_sequence
 
 TandemOrientation = Literal["upstream", "downstream"]
+_MIN_COPIED_LENGTH = 6
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,8 @@ class ITD:
     tandem_start: int
     tandem_sequence: str
     orientation: TandemOrientation
+    spacer_prefix: str = ""
+    spacer_suffix: str = ""
 
     @property
     def tandem_end(self) -> int:
@@ -28,6 +30,16 @@ class ITD:
     def length(self) -> int:
         """Return the duplicated sequence length."""
         return len(self.tandem_sequence)
+
+    @property
+    def spacer_sequence(self) -> str:
+        """Return the combined spacer sequence flanking the copied tract."""
+        return f"{self.spacer_prefix}{self.spacer_suffix}"
+
+    @property
+    def spacer_length(self) -> int:
+        """Return the total spacer length."""
+        return len(self.spacer_prefix) + len(self.spacer_suffix)
 
 
 @dataclass(frozen=True)
@@ -52,63 +64,38 @@ class TandemSimilarity:
         return self.matches / len(self.tandem_sequence)
 
 
+@dataclass(frozen=True)
+class _TandemMatch:
+    insertion_start: int
+    insertion_end: int
+    tandem_start: int
+    tandem_sequence: str
+    mismatches: int
+
+
 def classify_exact_itd(insertion: Insertion, reference: str) -> ITD | None:
-    """Classify an insertion as an exact-match tandem duplication.
-
-    This first classifier only accepts insertions that exactly duplicate the
-    adjacent upstream or downstream WT reference segment. Fuzzy matching can be
-    layered on later without changing the call model. Exact ITDs are reported
-    in a canonical downstream representation, choosing the right-most
-    equivalent breakpoint in repetitive sequence contexts.
-    """
+    """Classify an insertion as an exact tandem duplication with spacers."""
     _validate_reference(reference)
-    sequence = insertion.sequence
-    if not sequence:
+    match = _best_exact_copied_match(insertion.sequence, reference)
+    if match is None or len(match.tandem_sequence) < _MIN_COPIED_LENGTH:
         return None
-
-    if not _has_adjacent_exact_match(insertion, reference):
-        return None
-
-    return _canonical_downstream_itd(insertion, reference)
+    return _itd_from_match(insertion, match)
 
 
 def score_tandem_similarity(
     insertion: Insertion,
     reference: str,
 ) -> TandemSimilarity | None:
-    """Score how well an insertion matches any WT tandem window.
-
-    This is a minimal fuzzy-matching primitive for later ITD classification.
-    It searches all WT windows of the same length as the insertion and returns
-    the best match, preferring the right-most window when there is a tie.
-    """
+    """Score how well an inserted sequence matches any WT tandem window."""
     _validate_reference(reference)
-    sequence = insertion.sequence
-    if not sequence:
+    match = _best_fuzzy_tandem_match(insertion.sequence, reference)
+    if match is None:
         return None
-    if len(sequence) > len(reference):
-        return None
-
-    best_start = None
-    best_mismatches = None
-    for tandem_start in range(len(reference) - len(sequence) + 1):
-        tandem_sequence = reference[tandem_start : tandem_start + len(sequence)]
-        mismatches = sum(
-            1 for observed, expected in zip(sequence, tandem_sequence, strict=True)
-            if observed != expected
-        )
-        key = (mismatches, -tandem_start)
-        if best_start is None or key < (best_mismatches, -best_start):
-            best_start = tandem_start
-            best_mismatches = mismatches
-
-    assert best_start is not None
-    assert best_mismatches is not None
     return TandemSimilarity(
         insertion=insertion,
-        tandem_start=best_start,
-        tandem_sequence=reference[best_start : best_start + len(sequence)],
-        mismatches=best_mismatches,
+        tandem_start=match.tandem_start,
+        tandem_sequence=match.tandem_sequence,
+        mismatches=match.mismatches,
     )
 
 
@@ -118,14 +105,13 @@ def classify_fuzzy_itd(
     *,
     max_mismatches: int,
 ) -> ITD | None:
-    """Classify an insertion as an adjacent fuzzy-match tandem duplication.
-
-    The best same-length WT window must be adjacent to the insertion and must
-    be within the allowed mismatch threshold. If both adjacent windows are tied
-    for best mismatch score, classification is rejected as ambiguous.
-    """
+    """Classify an insertion as a fuzzy-match tandem duplication with spacers."""
     if max_mismatches < 0:
         raise ValueError("max_mismatches must not be negative")
+
+    exact_itd = classify_exact_itd(insertion, reference)
+    if exact_itd is not None:
+        return exact_itd
 
     similarity = score_tandem_similarity(insertion, reference)
     if similarity is None or similarity.mismatches > max_mismatches:
@@ -159,6 +145,71 @@ def classify_fuzzy_itd(
 
 def _validate_reference(reference: str) -> None:
     validate_sequence(reference, field_name="reference")
+
+
+def _best_exact_copied_match(
+    sequence: str,
+    reference: str,
+) -> _TandemMatch | None:
+    if not sequence:
+        return None
+
+    best_match: _TandemMatch | None = None
+    best_key: tuple[int, int, int] | None = None
+
+    for insertion_start in range(len(sequence)):
+        for insertion_end in range(insertion_start + 1, len(sequence) + 1):
+            tandem_sequence = sequence[insertion_start:insertion_end]
+            if len(tandem_sequence) > len(reference):
+                continue
+            for tandem_start in range(len(reference) - len(tandem_sequence) + 1):
+                tandem_reference = reference[
+                    tandem_start : tandem_start + len(tandem_sequence)
+                ]
+                if tandem_sequence != tandem_reference:
+                    continue
+                key = (-len(tandem_sequence), tandem_start, insertion_start)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_match = _TandemMatch(
+                        insertion_start=insertion_start,
+                        insertion_end=insertion_end,
+                        tandem_start=tandem_start,
+                        tandem_sequence=tandem_reference,
+                        mismatches=0,
+                    )
+
+    return best_match
+
+
+def _best_fuzzy_tandem_match(
+    sequence: str,
+    reference: str,
+) -> _TandemMatch | None:
+    if not sequence:
+        return None
+
+    best_match: _TandemMatch | None = None
+    best_key: tuple[int, int] | None = None
+
+    if len(sequence) > len(reference):
+        return None
+
+    for tandem_start in range(len(reference) - len(sequence) + 1):
+        tandem_sequence = reference[tandem_start : tandem_start + len(sequence)]
+        mismatches = _mismatch_count(sequence, tandem_sequence)
+        key = (mismatches, tandem_start)
+        if best_match is None or best_key is None or key < best_key:
+            best_key = key
+            best_match = _TandemMatch(
+                insertion_start=0,
+                insertion_end=len(sequence),
+                tandem_start=tandem_start,
+                tandem_sequence=tandem_sequence,
+                mismatches=mismatches,
+            )
+
+    return best_match
 
 
 def _is_adjacent_tandem_start(insertion: Insertion, tandem_start: int) -> bool:
@@ -202,51 +253,19 @@ def _adjacent_tandem_candidates(
     return candidates
 
 
+def _itd_from_match(insertion: Insertion, match: _TandemMatch) -> ITD:
+    return ITD(
+        insertion=insertion,
+        tandem_start=match.tandem_start,
+        tandem_sequence=match.tandem_sequence,
+        orientation="downstream",
+        spacer_prefix=insertion.sequence[: match.insertion_start],
+        spacer_suffix=insertion.sequence[match.insertion_end :],
+    )
+
+
 def _mismatch_count(observed: str, expected: str) -> int:
     return sum(
         1 for observed_base, expected_base in zip(observed, expected, strict=True)
         if observed_base != expected_base
     )
-
-
-def _has_adjacent_exact_match(insertion: Insertion, reference: str) -> bool:
-    sequence = insertion.sequence
-
-    upstream_start = insertion.start - len(sequence) + 1
-    if upstream_start >= 0:
-        upstream_sequence = reference[upstream_start : insertion.start + 1]
-        if upstream_sequence == sequence:
-            return True
-
-    downstream_start = insertion.start + 1
-    downstream_end = downstream_start + len(sequence)
-    if downstream_end <= len(reference):
-        downstream_sequence = reference[downstream_start:downstream_end]
-        if downstream_sequence == sequence:
-            return True
-
-    return False
-
-
-def _canonical_downstream_itd(insertion: Insertion, reference: str) -> ITD:
-    sequence = insertion.sequence
-    mutant_sequence = _mutant_sequence(reference, insertion.start, sequence)
-    tandem_starts = [
-        tandem_start
-        for tandem_start in range(len(reference) - len(sequence) + 1)
-        if reference[tandem_start : tandem_start + len(sequence)] == sequence
-        and _mutant_sequence(reference, tandem_start - 1, sequence) == mutant_sequence
-    ]
-
-    tandem_start = max(tandem_starts)
-    return ITD(
-        insertion=replace(insertion, start=tandem_start - 1),
-        tandem_start=tandem_start,
-        tandem_sequence=sequence,
-        orientation="downstream",
-    )
-
-
-def _mutant_sequence(reference: str, insertion_start: int, sequence: str) -> str:
-    insertion_index = insertion_start + 1
-    return reference[:insertion_index] + sequence + reference[insertion_index:]

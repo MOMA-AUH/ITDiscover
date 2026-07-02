@@ -144,6 +144,7 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Representative alignment" in report
     assert "tandem sequence" in report
     assert "inserted sequence" in report
+    assert "spacer sequence" in report
     assert "mismatches" in report
     assert "sky blue" not in report
     assert "teal green" not in report
@@ -159,7 +160,7 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Inserted sequence pileup" in report
     assert "<th>Inserted sequence</th><th>Mismatches</th><th>Count</th>" in report
     assert "CCCGGG" in report
-    assert 'CCCGG<span class="insert-mismatch">A</span>' in report
+    assert 'class="inserted-region insert-mismatch"' in report
 
 
 def test_call_command_trims_configured_primers(tmp_path, capsys) -> None:
@@ -513,6 +514,47 @@ def test_alignment_difference_classes_do_not_color_indels_yellow() -> None:
     assert "diff" not in cli._alignment_difference_classes(deletion, itd)
     assert "diff" not in cli._alignment_difference_classes(insertion, itd)
     assert cli._alignment_difference_classes(substitution, itd)[3] == "diff"
+
+
+def test_alignment_difference_classes_color_spacers_and_inserted_sequence() -> None:
+    itd = ITD(
+        insertion=Insertion(
+            read_id="read",
+            fragment_id="fragment",
+            start=2,
+            sequence="NNNCCCGGGNN",
+            direction="forward",
+        ),
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+        spacer_prefix="NNN",
+        spacer_suffix="NN",
+    )
+    alignment = Alignment(
+        read_id="read",
+        fragment_id="fragment",
+        read_sequence="AAANNNCCCGGGNNCCCGGGTTT",
+        aligned_reference="AAA-----------CCCGGGTTT",
+        aligned_read="AAANNNCCCGGGNNCCCGGGTTT",
+        direction="forward",
+    )
+
+    classes = cli._alignment_difference_classes(alignment, itd)
+
+    assert classes[3:14] == [
+        "spacer-region",
+        "spacer-region",
+        "spacer-region",
+        "inserted-region",
+        "inserted-region",
+        "inserted-region",
+        "inserted-region",
+        "inserted-region",
+        "inserted-region",
+        "spacer-region",
+        "spacer-region",
+    ]
 
 
 def test_call_command_rejects_non_html_output_path(tmp_path, capsys) -> None:

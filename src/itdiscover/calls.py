@@ -67,7 +67,7 @@ class InsertSequenceSupport:
     mismatches: int
 
 
-ITDCallKey = tuple[int, str, bool]
+ITDCallKey = tuple[int, str, str, str, bool]
 SupportRepresentativeMap = dict[ITDCallKey, dict[str, UniqueSupportRepresentative]]
 
 
@@ -213,6 +213,8 @@ def _itd_call_key(itd: ITD) -> ITDCallKey:
     return (
         itd.tandem_start,
         itd.tandem_sequence,
+        itd.spacer_prefix,
+        itd.spacer_suffix,
         itd.insertion.trailing,
     )
 
@@ -221,10 +223,12 @@ def _representative_itd(itds: list[ITD]) -> ITD:
     return itds[0]
 
 
-def _sort_key(call: ITDCall) -> tuple[int, int, str]:
+def _sort_key(call: ITDCall) -> tuple[int, int, str, str, str]:
     return (
         call.itd.insertion.start,
         call.itd.tandem_start,
+        call.itd.spacer_prefix,
+        call.itd.spacer_suffix,
         call.itd.insertion.sequence,
     )
 
@@ -294,6 +298,7 @@ def _collect_exact_itd_support(
                 continue
 
             key = _itd_call_key(itd)
+            expected_sequence = _expected_insertion_sequence(itd)
             grouped_itds[key].append(itd)
             signature = _support_signature(
                 alignment,
@@ -310,7 +315,7 @@ def _collect_exact_itd_support(
             fragment_ids_by_signature[key][signature].add(alignment.fragment_id)
             insert_sequences_by_fragment[key][alignment.fragment_id][
                 itd.insertion.sequence
-            ] = _sequence_mismatches(itd.insertion.sequence, itd.tandem_sequence)
+            ] = _sequence_mismatches(itd.insertion.sequence, expected_sequence)
 
     finalized_map: SupportRepresentativeMap = defaultdict(dict)
     for key, alignments_by_signature in representative_map.items():
@@ -318,6 +323,7 @@ def _collect_exact_itd_support(
             insert_sequences_by_fragment[key]
         )
         for signature, (itd, alignment) in alignments_by_signature.items():
+            expected_sequence = _expected_insertion_sequence(itd)
             finalized_map[key][signature] = UniqueSupportRepresentative(
                 itd=itd,
                 signature=signature,
@@ -326,7 +332,7 @@ def _collect_exact_itd_support(
                 exact_support_count=len(fragment_ids_by_signature[key][signature]),
                 mismatches=_sequence_mismatches(
                     itd.insertion.sequence,
-                    itd.tandem_sequence,
+                    expected_sequence,
                 ),
                 insert_sequence_supports=insert_sequence_supports,
             )
@@ -370,6 +376,7 @@ def _collect_fuzzy_itd_support(
                 continue
 
             key = _itd_call_key(itd)
+            expected_sequence = _expected_insertion_sequence(itd)
             grouped_itds[key].append(itd)
             signature = _support_signature(
                 alignment,
@@ -386,7 +393,7 @@ def _collect_fuzzy_itd_support(
             fragment_ids_by_signature[key][signature].add(alignment.fragment_id)
             insert_sequences_by_fragment[key][alignment.fragment_id][
                 insertion.sequence
-            ] = _sequence_mismatches(insertion.sequence, itd.tandem_sequence)
+            ] = _sequence_mismatches(insertion.sequence, expected_sequence)
 
             exact_itd = classify_exact_itd(insertion, reference)
             if exact_itd is not None:
@@ -417,6 +424,7 @@ def _collect_fuzzy_itd_support(
             fragment_ids = fragment_ids_by_signature[key][signature]
             exact_fragment_ids = exact_fragment_ids_by_signature[key][signature]
             fuzzy_only_count = len(fragment_ids - exact_fragment_ids)
+            expected_sequence = _expected_insertion_sequence(itd)
             finalized_map[key][signature] = UniqueSupportRepresentative(
                 itd=itd,
                 signature=signature,
@@ -429,7 +437,7 @@ def _collect_fuzzy_itd_support(
                 ),
                 mismatches=_sequence_mismatches(
                     itd.insertion.sequence,
-                    itd.tandem_sequence,
+                    expected_sequence,
                 ),
                 insert_sequence_supports=insert_sequence_supports,
             )
@@ -445,7 +453,10 @@ def _set_best_representative(
 ) -> None:
     current = representatives.get(signature)
     candidate_key = (
-        _sequence_mismatches(itd.insertion.sequence, itd.tandem_sequence),
+        _sequence_mismatches(
+            itd.insertion.sequence,
+            _expected_insertion_sequence(itd),
+        ),
         alignment.read_id,
     )
     if current is None:
@@ -456,7 +467,7 @@ def _set_best_representative(
     current_key = (
         _sequence_mismatches(
             current_itd.insertion.sequence,
-            current_itd.tandem_sequence,
+            _expected_insertion_sequence(current_itd),
         ),
         current_alignment.read_id,
     )
@@ -514,11 +525,13 @@ def _sorted_representatives(
 
 def _representative_sort_key(
     representative: UniqueSupportRepresentative,
-) -> tuple[int, int, str, int, str, str]:
+) -> tuple[int, int, str, str, str, int, str, str]:
     return (
         representative.itd.insertion.start,
         representative.itd.tandem_start,
         representative.itd.tandem_sequence,
+        representative.itd.spacer_prefix,
+        representative.itd.spacer_suffix,
         -representative.support_count,
         representative.signature,
         representative.alignment.read_id,
@@ -540,3 +553,7 @@ def _call_filter_reasons(
     if vaf < filters.min_vaf:
         reasons.append("LOW_VAF")
     return tuple(reasons)
+
+
+def _expected_insertion_sequence(itd: ITD) -> str:
+    return f"{itd.spacer_prefix}{itd.tandem_sequence}{itd.spacer_suffix}"

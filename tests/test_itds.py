@@ -17,7 +17,7 @@ def Insertion(**kwargs):
     return _Insertion(**kwargs)
 
 
-def test_classifies_exact_upstream_tandem_duplication_as_canonical_downstream() -> None:
+def test_classifies_exact_upstream_tandem_duplication_without_rewriting_breakpoint() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=8,
@@ -26,12 +26,7 @@ def test_classifies_exact_upstream_tandem_duplication_as_canonical_downstream() 
     )
 
     assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
-        insertion=Insertion(
-            read_id="read-1",
-            start=2,
-            sequence="CCCGGG",
-            direction="forward",
-        ),
+        insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
         orientation="downstream",
@@ -54,57 +49,54 @@ def test_classifies_exact_downstream_tandem_duplication() -> None:
     )
 
 
-def test_uses_right_most_canonical_downstream_break_when_both_sides_match() -> None:
+def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=5,
-        sequence="AAA",
+        sequence="AAAAAA",
         direction="forward",
     )
 
-    assert classify_exact_itd(insertion, "AAAAAA") == ITD(
-        insertion=Insertion(
-            read_id="read-1",
-            start=2,
-            sequence="AAA",
-            direction="forward",
-        ),
-        tandem_start=3,
-        tandem_sequence="AAA",
+    assert classify_exact_itd(insertion, "AAAAAAAAAAAA") == ITD(
+        insertion=insertion,
+        tandem_start=0,
+        tandem_sequence="AAAAAA",
         orientation="downstream",
     )
 
 
-def test_slides_repetitive_exact_itds_to_right_most_equivalent_breakpoint() -> None:
+def test_slides_repetitive_exact_itds_to_most_five_prime_source_interval() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=0,
-        sequence="AAA",
+        sequence="AAAAAA",
         direction="forward",
     )
 
-    assert classify_exact_itd(insertion, "AAAAAA") == ITD(
-        insertion=Insertion(
-            read_id="read-1",
-            start=2,
-            sequence="AAA",
-            direction="forward",
-        ),
-        tandem_start=3,
-        tandem_sequence="AAA",
+    assert classify_exact_itd(insertion, "AAAAAAAAAAAA") == ITD(
+        insertion=insertion,
+        tandem_start=0,
+        tandem_sequence="AAAAAA",
         orientation="downstream",
     )
 
 
-def test_does_not_classify_non_adjacent_reference_match() -> None:
+def test_classifies_exact_tandem_with_spacers_on_both_sides() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
-        sequence="TTT",
+        sequence="NNNCCCGGGNN",
         direction="forward",
     )
 
-    assert classify_exact_itd(insertion, "AAACCCGGGTTT") is None
+    assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
+        insertion=insertion,
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+        spacer_prefix="NNN",
+        spacer_suffix="NN",
+    )
 
 
 def test_does_not_classify_sequence_absent_from_reference() -> None:
@@ -145,6 +137,8 @@ def test_itd_reports_inclusive_tandem_end_and_length() -> None:
 
     assert itd.tandem_end == 8
     assert itd.length == 6
+    assert itd.spacer_sequence == ""
+    assert itd.spacer_length == 0
 
 
 def test_scores_exact_tandem_similarity() -> None:
@@ -185,7 +179,7 @@ def test_scores_best_tandem_similarity_with_one_mismatch() -> None:
     assert similarity.identity == 5 / 6
 
 
-def test_scores_right_most_tandem_on_tie() -> None:
+def test_scores_most_five_prime_tandem_on_tie() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=5,
@@ -197,13 +191,13 @@ def test_scores_right_most_tandem_on_tie() -> None:
 
     assert similarity == TandemSimilarity(
         insertion=insertion,
-        tandem_start=3,
+        tandem_start=0,
         tandem_sequence="AAA",
         mismatches=0,
     )
 
 
-def test_scores_tandem_similarity_returns_none_for_long_insertions() -> None:
+def test_classifies_exact_tandem_with_longest_copied_segment_and_spacers() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
@@ -211,7 +205,14 @@ def test_scores_tandem_similarity_returns_none_for_long_insertions() -> None:
         direction="forward",
     )
 
-    assert score_tandem_similarity(insertion, "AAACCCGGGTTT") is None
+    assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
+        insertion=insertion,
+        tandem_start=3,
+        tandem_sequence="CCCGGGTTT",
+        orientation="downstream",
+        spacer_prefix="",
+        spacer_suffix="AAAA",
+    )
 
 
 def test_classifies_fuzzy_downstream_tandem_duplication_with_one_mismatch() -> None:
@@ -234,6 +235,28 @@ def test_classifies_fuzzy_downstream_tandem_duplication_with_one_mismatch() -> N
     )
 
 
+def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
+    insertion = Insertion(
+        read_id="read-1",
+        start=2,
+        sequence="NNNCCCGGGNN",
+        direction="forward",
+    )
+
+    assert classify_fuzzy_itd(
+        insertion,
+        "AAACCCGGGTTT",
+        max_mismatches=1,
+    ) == ITD(
+        insertion=insertion,
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+        spacer_prefix="NNN",
+        spacer_suffix="NN",
+    )
+
+
 def test_does_not_classify_fuzzy_itd_when_mismatches_exceed_threshold() -> None:
     insertion = Insertion(
         read_id="read-1",
@@ -249,30 +272,31 @@ def test_does_not_classify_fuzzy_itd_when_mismatches_exceed_threshold() -> None:
     ) is None
 
 
-def test_does_not_classify_fuzzy_itd_when_best_window_is_non_adjacent() -> None:
+def test_does_not_classify_fuzzy_itd_for_sequences_without_a_close_match() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
-        sequence="TTT",
+        sequence="NNNNNN",
         direction="forward",
     )
 
-    assert classify_fuzzy_itd(
-        insertion,
-        "AAACCCGGGTTT",
-        max_mismatches=3,
-    ) is None
+    assert classify_fuzzy_itd(insertion, "AAACCCGGGTTT", max_mismatches=3) is None
 
 
-def test_does_not_classify_fuzzy_itd_when_adjacent_windows_tie() -> None:
+def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
     insertion = Insertion(
         read_id="read-1",
-        start=2,
-        sequence="AAT",
+        start=5,
+        sequence="AAAAAT",
         direction="forward",
     )
 
-    assert classify_fuzzy_itd(insertion, "AAAAAA", max_mismatches=1) is None
+    assert classify_fuzzy_itd(insertion, "AAAAAAA", max_mismatches=1) == ITD(
+        insertion=insertion,
+        tandem_start=0,
+        tandem_sequence="AAAAAA",
+        orientation="upstream",
+    )
 
 
 def test_classify_fuzzy_itd_rejects_negative_mismatch_threshold() -> None:

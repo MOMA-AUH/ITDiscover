@@ -62,16 +62,16 @@ def test_call_exact_itds_reports_support_coverage_and_vaf() -> None:
     ]
 
     assert call_exact_itds(alignments, reference) == [
-        ITDCall(
-            itd=ITD(
-                insertion=make_insertion(
-                    "itd-read-1",
-                    start=2,
-                    sequence="CCCGGG",
-                ),
-                tandem_start=3,
-                tandem_sequence="CCCGGG",
-                orientation="downstream",
+            ITDCall(
+                itd=ITD(
+                    insertion=make_insertion(
+                        "itd-read-1",
+                        start=8,
+                        sequence="CCCGGG",
+                    ),
+                    tandem_start=3,
+                    tandem_sequence="CCCGGG",
+                    orientation="downstream",
             ),
             support_count=3,
             coverage=10,
@@ -215,12 +215,12 @@ def test_call_exact_itds_ignores_non_itd_insertions() -> None:
 def test_call_exact_itds_returns_sorted_calls() -> None:
     reference = "AAACCCGGGTTTAAACCC"
     alignments = [
-        make_alignment(
-            "later-itd",
-            "AAACCCGGGTTTAAACCCCCC",
-            "AAACCCGGGTTTAAACCCCCC",
-            "AAACCCGGGTTTAAACCC---",
-        ),
+            make_alignment(
+                "later-itd",
+                "AAACCCGGGTTTAAACCCAAACCC",
+                "AAACCCGGGTTTAAACCCAAACCC",
+                "AAACCCGGGTTTAAACCC------",
+            ),
         make_alignment(
             "earlier-itd",
             "AAACCCGGGCCCGGGTTTAAACCC",

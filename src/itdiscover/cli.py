@@ -16,6 +16,7 @@ from .calls import (
 )
 from .fastq import read_paired_fastq
 from .insertions import Alignment
+from .itds import ITD
 from .reads import ReadTrimSettings, preprocess_fragments
 
 
@@ -238,11 +239,15 @@ def _write_unique_support_alignment_html_report(
     calls: list[ITDCall],
     representatives: list[UniqueSupportRepresentative],
 ) -> None:
-    representatives_by_key: dict[tuple[int, str, bool], list[UniqueSupportRepresentative]] = {}
+    representatives_by_key: dict[
+        tuple[int, str, str, str, bool], list[UniqueSupportRepresentative]
+    ] = {}
     for representative in representatives:
         key = (
             representative.itd.tandem_start,
             representative.itd.tandem_sequence,
+            representative.itd.spacer_prefix,
+            representative.itd.spacer_suffix,
             representative.itd.insertion.trailing,
         )
         representatives_by_key.setdefault(key, []).append(representative)
@@ -255,6 +260,8 @@ def _write_unique_support_alignment_html_report(
             call.itd.insertion.start,
             call.itd.tandem_start,
             call.itd.tandem_sequence,
+            call.itd.spacer_prefix,
+            call.itd.spacer_suffix,
             call.itd.insertion.sequence,
         ),
     )
@@ -262,6 +269,8 @@ def _write_unique_support_alignment_html_report(
         key = (
             call.itd.tandem_start,
             call.itd.tandem_sequence,
+            call.itd.spacer_prefix,
+            call.itd.spacer_suffix,
             call.itd.insertion.trailing,
         )
         call_representatives = representatives_by_key.get(key, [])
@@ -281,10 +290,12 @@ def _write_unique_support_alignment_html_report(
       --panel: #f7fafc;
       --tandem-bg: #dbeafe;
       --tandem-fg: #12315d;
-      --inserted-bg: #d1fae5;
-      --inserted-fg: #065f46;
-      --mismatch-bg: #ffedd5;
-      --mismatch-fg: #9a3412;
+      --inserted-bg: #dbeafe;
+      --inserted-fg: #12315d;
+      --spacer-bg: #fef3c7;
+      --spacer-fg: #92400e;
+      --mismatch-bg: #fee2e2;
+      --mismatch-fg: #b91c1c;
     }
     body {
       margin: 24px;
@@ -445,6 +456,11 @@ def _write_unique_support_alignment_html_report(
       color: var(--inserted-fg);
       font-weight: 700;
     }
+    .spacer-region {
+      background: var(--spacer-bg);
+      color: var(--spacer-fg);
+      font-weight: 700;
+    }
     .insert-mismatch {
       background: var(--mismatch-bg);
       color: var(--mismatch-fg);
@@ -457,6 +473,7 @@ def _write_unique_support_alignment_html_report(
   <div class="legend">
     <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
+    <span class="legend-item"><span class="legend-chip spacer-region">S</span> spacer sequence</span>
     <span class="legend-item"><span class="legend-chip diff">A</span> mismatches</span>
   </div>
   __SECTIONS__
@@ -478,6 +495,8 @@ def _render_html_call_section(
     summary = (
         ('Tandem Start', str(call.itd.tandem_start)),
         ('Sequence', call.itd.tandem_sequence),
+        ('Spacer Prefix', call.itd.spacer_prefix or "-"),
+        ('Spacer Suffix', call.itd.spacer_suffix or "-"),
         ('Support Count', str(call.support_count)),
         ('Coverage', str(call.coverage)),
         ('VAF', f"{call.vaf:.6f}"),
@@ -557,11 +576,10 @@ def _render_insert_sequence_pileup(
     if not representative.insert_sequence_supports:
         return ""
 
-    tandem_sequence = representative.itd.tandem_sequence
     rows = "".join(
         (
             "<tr>"
-            f"<td>{_highlight_sequence_mismatches(support.sequence, tandem_sequence)}</td>"
+            f"<td>{_highlight_inserted_sequence(support.sequence, representative.itd)}</td>"
             f"<td>{support.mismatches}</td>"
             f"<td>{support.support_count}</td>"
             "</tr>"
@@ -587,6 +605,29 @@ def _highlight_sequence_mismatches(observed: str, expected: str) -> str:
             fragments.append(escaped_base)
             continue
         fragments.append(f'<span class="insert-mismatch">{escaped_base}</span>')
+    return "".join(fragments)
+
+
+def _highlight_inserted_sequence(sequence: str, itd: ITD) -> str:
+    fragments: list[str] = []
+    expected_sequence = _expected_insertion_sequence(itd)
+    prefix_length = len(itd.spacer_prefix)
+    tandem_length = len(itd.tandem_sequence)
+
+    for index, base in enumerate(sequence):
+        escaped_base = html.escape(base)
+        if index < prefix_length or index >= prefix_length + tandem_length:
+            css_class = "spacer-region"
+            if base != expected_sequence[index]:
+                css_class = "spacer-region insert-mismatch"
+            fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
+            continue
+
+        css_class = "inserted-region"
+        if base != expected_sequence[index]:
+            css_class = "inserted-region insert-mismatch"
+        fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
+
     return "".join(fragments)
 
 
@@ -633,6 +674,9 @@ def _alignment_difference_classes(
     classes: list[str | None] = []
     ref_pos = -1
     insertion_offsets: dict[int, int] = {}
+    expected_sequence = _expected_insertion_sequence(itd)
+    prefix_length = len(itd.spacer_prefix)
+    tandem_length = len(itd.tandem_sequence)
 
     for read_base, ref_base in zip(
         alignment.aligned_read,
@@ -648,12 +692,17 @@ def _alignment_difference_classes(
             insertion_site = ref_pos
             offset = insertion_offsets.get(insertion_site, 0)
             if insertion_site == itd.insertion.start and offset < len(
-                itd.tandem_sequence
+                expected_sequence
             ):
-                css_class = "inserted-region"
-                expected_base = itd.tandem_sequence[offset]
-                if read_base != expected_base:
-                    css_class = "inserted-region insert-mismatch"
+                if offset < prefix_length or offset >= prefix_length + tandem_length:
+                    css_class = "spacer-region"
+                    if read_base != expected_sequence[offset]:
+                        css_class = "spacer-region insert-mismatch"
+                else:
+                    css_class = "inserted-region"
+                    expected_base = expected_sequence[offset]
+                    if read_base != expected_base:
+                        css_class = "inserted-region insert-mismatch"
             insertion_offsets[insertion_site] = offset + 1
 
         classes.append(css_class)
@@ -722,3 +771,7 @@ def _alignment_features(
         reference_bases,
         {site: "".join(bases) for site, bases in insertions.items()},
     )
+
+
+def _expected_insertion_sequence(itd: ITD) -> str:
+    return f"{itd.spacer_prefix}{itd.tandem_sequence}{itd.spacer_suffix}"
