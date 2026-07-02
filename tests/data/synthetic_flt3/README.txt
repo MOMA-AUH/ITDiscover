@@ -12,13 +12,13 @@ Fragments:
   wt-1..4             = wild type controls
   exact-itd-1..5      = exact 15 bp ITD copied from reference positions
                         80-94.
-  fuzzy-itd-1         = 6 bp insertion with one mismatch in the copied tract;
+  fuzzy-itd-1         = 6 bp insertion with one mismatch in the copied segment;
                         it should appear with `--max-mismatches 1`.
   fuzzy-itd-2         = 6 bp insertion with two mismatches in the copied
-                        tract; it should only appear with `--max-mismatches 2`.
-  spacer-itd-1..2     = insertion with a 10 bp copied tract from reference
+                        segment; it should only appear with `--max-mismatches 2`.
+  spacer-itd-1..2     = insertion with a 10 bp copied segment from reference
                         positions 80-89 and spacers of three bases on the
-                        left and two on the right (AAA + copied tract + TT).
+                        left and two on the right (AAA + copied segment + TT).
   trailing-ins-1      = trailing insertion example; the inserted C-rich tail
                         is meant to illustrate a trailing insertion and is
                         not expected to call as an ITD.
