@@ -167,6 +167,8 @@ def _run_call_command(args: argparse.Namespace) -> int:
             args.output,
             calls,
             representatives,
+            filters=filters,
+            max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
         )
     return 0
 
@@ -238,6 +240,9 @@ def _write_unique_support_alignment_html_report(
     path: Path,
     calls: list[ITDCall],
     representatives: list[UniqueSupportRepresentative],
+    *,
+    filters: ITDFilter | None = None,
+    max_mismatches: int | None = None,
 ) -> None:
     representatives_by_key: dict[
         tuple[int, str, str, str, bool], list[UniqueSupportRepresentative]
@@ -275,6 +280,11 @@ def _write_unique_support_alignment_html_report(
         )
         call_representatives = representatives_by_key.get(key, [])
         sections.append(_render_html_call_section(call, call_representatives))
+
+    thresholds_section = _render_html_thresholds_section(
+        filters=filters,
+        max_mismatches=max_mismatches,
+    )
 
     document = """<!DOCTYPE html>
 <html lang="en">
@@ -362,6 +372,40 @@ def _write_unique_support_alignment_html_report(
       margin: 0 0 20px;
       color: var(--ink);
       font-size: 15px;
+    }
+    .thresholds {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 12px 14px;
+      margin: 0 0 20px;
+    }
+    .thresholds-title {
+      margin: 0 0 10px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .thresholds-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px 14px;
+    }
+    .thresholds-item {
+      display: grid;
+      gap: 2px;
+    }
+    .thresholds-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .thresholds-value {
+      font-size: 15px;
+      font-weight: 600;
     }
     .legend-item {
       display: inline-flex;
@@ -470,6 +514,7 @@ def _write_unique_support_alignment_html_report(
 </head>
 <body>
   <h1>ITDiscover Report</h1>
+  __THRESHOLDS__
   <div class="legend">
     <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
@@ -483,8 +528,44 @@ def _write_unique_support_alignment_html_report(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        document.replace("__SECTIONS__", "\n".join(sections)),
+        document.replace("__THRESHOLDS__", thresholds_section).replace(
+            "__SECTIONS__",
+            "\n".join(sections),
+        ),
         encoding="utf-8",
+    )
+
+
+def _render_html_thresholds_section(
+    *,
+    filters: ITDFilter | None,
+    max_mismatches: int,
+) -> str:
+    items: list[tuple[str, str]] = []
+    if filters is not None:
+        items.extend(
+            [
+                ("Min support count", str(filters.min_support_count)),
+                ("Min coverage", str(filters.min_coverage)),
+                ("Min VAF", f"{filters.min_vaf:.6f}"),
+            ]
+        )
+    items.append(("Max mismatches", str(max_mismatches)))
+
+    item_html = "".join(
+        (
+            '<div class="thresholds-item">'
+            f'<span class="thresholds-label">{html.escape(label)}</span>'
+            f'<span class="thresholds-value">{html.escape(value)}</span>'
+            "</div>"
+        )
+        for label, value in items
+    )
+    return (
+        '<section class="thresholds">'
+        '<div class="thresholds-title"><strong>CALL THRESHOLDS</strong></div>'
+        f'<div class="thresholds-grid">{item_html}</div>'
+        '</section>'
     )
 
 

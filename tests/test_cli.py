@@ -141,6 +141,12 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     report = report_path.read_text(encoding="utf-8")
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
+    assert "CALL THRESHOLDS" in report
+    assert "Min support count" in report
+    assert "Min coverage" in report
+    assert "Min VAF" in report
+    assert "Max mismatches" in report
+    assert ">1<" in report
     assert "Representative alignment" in report
     assert "tandem sequence" in report
     assert "inserted sequence" in report
