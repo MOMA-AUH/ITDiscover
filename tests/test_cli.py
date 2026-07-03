@@ -1,3 +1,5 @@
+import csv
+
 import pytest
 
 import itdiscover
@@ -167,6 +169,95 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "<th>Inserted sequence</th><th>Mismatches</th><th>Count</th>" in report
     assert "CCCGGG" in report
     assert 'class="inserted-region insert-mismatch"' in report
+
+
+def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None:
+    reference_path = tmp_path / "reference.fasta"
+    reference_path.write_text(">FLT3\nAAACCCGGGTTT\n", encoding="utf-8")
+    report_path = tmp_path / "calls.tsv"
+
+    r1_path = tmp_path / "sample_R1.fastq"
+    r1_path.write_text(
+        (
+            "@itd-fragment/1\n"
+            "AAACCCGGGCCCGGATTT\n"
+            "+\n"
+            "IIIIIIIIIIIIIIIIII\n"
+            "@wt-fragment/1\n"
+            "AAACCCGGGTTT\n"
+            "+\n"
+            "IIIIIIIIIIII\n"
+        ),
+        encoding="utf-8",
+    )
+
+    r2_path = tmp_path / "sample_R2.fastq"
+    r2_path.write_text(
+        (
+            "@itd-fragment/2\n"
+            "AAACCCGGGTTT\n"
+            "+\n"
+            "IIIIIIIIIIII\n"
+            "@wt-fragment/2\n"
+            "AAACCCGGGTTT\n"
+            "+\n"
+            "IIIIIIIIIIII\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        cli.main(
+            [
+                "--reference",
+                str(reference_path),
+                "--r1",
+                str(r1_path),
+                "--r2",
+                str(r2_path),
+                "--min-read-length",
+                "12",
+                "--min-mean-quality",
+                "30",
+                "--max-mismatches",
+                "1",
+                "--output-tsv",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == ""
+    rows = list(csv.reader(report_path.read_text(encoding="utf-8").splitlines(), delimiter="\t"))
+    assert rows[0] == [
+        "Call",
+        "Status",
+        "Filter Reasons",
+        "Mode",
+        "Max Mismatches",
+        "Insertion Start",
+        "Tandem Start",
+        "Tandem End",
+        "Tandem Sequence",
+        "Spacer Prefix",
+        "Spacer Suffix",
+        "Insertion Sequence",
+        "Support Count",
+        "Coverage",
+        "VAF",
+        "Min Support Count",
+        "Min Coverage",
+        "Min VAF",
+    ]
+    assert rows[1][1] == "PASS"
+    assert rows[1][3] == "fuzzy"
+    assert rows[1][4] == "1"
+    assert rows[1][5] == "8"
+    assert rows[1][6] == "3"
+    assert rows[1][7] == "8"
+    assert rows[1][8] == "CCCGGG"
+    assert rows[1][11] == "CCCGGA"
 
 
 def test_call_command_trims_configured_primers(tmp_path, capsys) -> None:

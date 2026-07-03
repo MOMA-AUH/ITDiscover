@@ -32,4 +32,5 @@ itdiscover \
 ```
 
 The `--output` flag writes an HTML report with one representative alignment per called duplication.
+The `--output-tsv` flag writes a tab-separated summary of the called ITDs.
 Primer trimming is optional and can be enabled with `--forward-primer` and `--reverse-primer`.

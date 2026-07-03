@@ -1,6 +1,7 @@
 """Command-line interface for ITDiscover."""
 
 import argparse
+import csv
 import html
 from pathlib import Path
 from typing import TextIO
@@ -118,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=_html_output_path,
         help="Optional path for an HTML report with one representative alignment per unique support pattern.",
     )
+    parser.add_argument(
+        "--output-tsv",
+        type=_tsv_output_path,
+        help="Optional path for a TSV summary of called ITDs.",
+    )
     return parser
 
 
@@ -170,6 +176,15 @@ def _run_call_command(args: argparse.Namespace) -> int:
             filters=filters,
             max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
         )
+    if args.output_tsv:
+        _write_tsv_call_report(
+            args.output_tsv,
+            calls,
+            max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
+            min_support_count=filters.min_support_count,
+            min_coverage=filters.min_coverage,
+            min_vaf=filters.min_vaf,
+        )
     return 0
 
 
@@ -177,6 +192,13 @@ def _html_output_path(value: str) -> Path:
     path = Path(value)
     if path.suffix.lower() != ".html":
         raise argparse.ArgumentTypeError("output path must end with .html")
+    return path
+
+
+def _tsv_output_path(value: str) -> Path:
+    path = Path(value)
+    if path.suffix.lower() != ".tsv":
+        raise argparse.ArgumentTypeError("output path must end with .tsv")
     return path
 
 
@@ -534,6 +556,66 @@ def _write_unique_support_alignment_html_report(
         ),
         encoding="utf-8",
     )
+
+
+def _write_tsv_call_report(
+    path: Path,
+    calls: list[ITDCall],
+    *,
+    max_mismatches: int,
+    min_support_count: int,
+    min_coverage: int,
+    min_vaf: float,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open(mode="wt", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(
+            [
+                "Call",
+                "Status",
+                "Filter Reasons",
+                "Mode",
+                "Max Mismatches",
+                "Insertion Start",
+                "Tandem Start",
+                "Tandem End",
+                "Tandem Sequence",
+                "Spacer Prefix",
+                "Spacer Suffix",
+                "Insertion Sequence",
+                "Support Count",
+                "Coverage",
+                "VAF",
+                "Min Support Count",
+                "Min Coverage",
+                "Min VAF",
+            ]
+        )
+        mode = "exact" if max_mismatches == 0 else "fuzzy"
+        for index, call in enumerate(calls, start=1):
+            writer.writerow(
+                [
+                    index,
+                    call.status,
+                    _format_filter_reasons(call),
+                    mode,
+                    max_mismatches,
+                    call.itd.insertion.start,
+                    call.itd.tandem_start,
+                    call.itd.tandem_end,
+                    call.itd.tandem_sequence,
+                    call.itd.spacer_prefix or "-",
+                    call.itd.spacer_suffix or "-",
+                    call.itd.insertion.sequence,
+                    call.support_count,
+                    call.coverage,
+                    f"{call.vaf:.6f}",
+                    min_support_count,
+                    min_coverage,
+                    f"{min_vaf:.6f}",
+                ]
+            )
 
 
 def _render_html_thresholds_section(
