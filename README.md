@@ -1,6 +1,6 @@
 # ITDiscover
 
-[![Anaconda-Server Badge](https://anaconda.org/MOMA-AUH/itdiscover/badges/version.svg)](https://anaconda.org/MOMA-AUH/itdiscover) [![Anaconda-Server Badge](https://anaconda.org/MOMA-AUH/itdiscover/badges/downloads.svg)](https://anaconda.org/MOMA-AUH/itdiscover)
+[![Conda Version](https://img.shields.io/conda/vn/MOMA-AUH/itdiscover?cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover) [![Conda Downloads](https://img.shields.io/conda/dn/MOMA-AUH/itdiscover?cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover)
 
 Tool for discovering FLT3 ITDs from amplicon sequencing of AML samples
 
