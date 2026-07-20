@@ -63,13 +63,18 @@ def interbase_coverage(alignments: Iterable[Alignment]) -> dict[int, int]:
 
 
 def variant_allele_frequency(supporting_count: int, spanning_count: int) -> float:
-    """Return VAF as a fraction of supporting reads among spanning reads."""
+    """Return VAF as a fraction of supporting reads among spanning reads.
+
+    Zero spanning coverage is defined as 0.0 only when there is also no
+    supporting evidence.  Positive support without spanning coverage is an
+    impossible count combination and must not be represented as a valid VAF.
+    """
     if supporting_count < 0:
         raise ValueError("supporting_count must not be negative")
     if spanning_count < 0:
         raise ValueError("spanning_count must not be negative")
-    if spanning_count == 0:
-        return 0.0
     if supporting_count > spanning_count:
         raise ValueError("supporting_count must not exceed spanning_count")
+    if spanning_count == 0:
+        return 0.0
     return supporting_count / spanning_count

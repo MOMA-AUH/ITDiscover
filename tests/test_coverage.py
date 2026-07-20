@@ -158,3 +158,5 @@ def test_variant_allele_frequency_rejects_impossible_counts() -> None:
         variant_allele_frequency(1, -10)
     with pytest.raises(ValueError, match="must not exceed"):
         variant_allele_frequency(11, 10)
+    with pytest.raises(ValueError, match="must not exceed"):
+        variant_allele_frequency(1, 0)
