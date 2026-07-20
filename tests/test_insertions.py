@@ -1,6 +1,11 @@
 import pytest
 
-from itdiscover.insertions import Alignment, Insertion, extract_insertions
+from itdiscover.insertions import (
+    Alignment,
+    Insertion,
+    InsertionEvidenceFilter,
+    extract_insertions,
+)
 
 _Alignment = Alignment
 _Insertion = Insertion
@@ -174,3 +179,35 @@ def test_filters_insertions_with_ambiguous_bases() -> None:
     )
 
     assert extract_insertions(alignment, min_length=3) == []
+
+
+def test_filters_low_quality_junction_evidence() -> None:
+    alignment = Alignment(
+        read_id="low-junction-quality",
+        read_sequence="AAACCCCCCGGG",
+        aligned_read="AAACCCCCCGGG",
+        aligned_reference="AAA------GGG",
+        direction="forward",
+        aligned_qualities=(40, 40, 40, 40, 40, 10, 40, 40, 40, 40, 40, 40),
+    )
+
+    assert extract_insertions(
+        alignment,
+        evidence_filter=InsertionEvidenceFilter(min_junction_quality=30),
+    ) == []
+
+
+def test_filters_adapter_sequence_in_insertion_evidence() -> None:
+    adapter = "AGATCGGAAGAG"
+    alignment = Alignment(
+        read_id="adapter-artifact",
+        read_sequence=f"AAA{adapter}GGG",
+        aligned_read=f"AAA{adapter}GGG",
+        aligned_reference=f"AAA{'-' * len(adapter)}GGG",
+        direction="forward",
+    )
+
+    assert extract_insertions(
+        alignment,
+        evidence_filter=InsertionEvidenceFilter(adapter_sequences=(adapter,)),
+    ) == []

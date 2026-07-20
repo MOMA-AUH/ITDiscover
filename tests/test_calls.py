@@ -1,3 +1,5 @@
+import pytest
+
 from itdiscover.calls import (
     ITDCall,
     ITDFilter,
@@ -14,14 +16,23 @@ def make_alignment(
     aligned_read: str,
     aligned_reference: str,
     direction: str = "forward",
+    fragment_id: str | None = None,
 ) -> Alignment:
     return Alignment(
         read_id=read_id,
-        fragment_id=read_id,
+        fragment_id=fragment_id or read_id,
         read_sequence=read_sequence,
         aligned_read=aligned_read,
         aligned_reference=aligned_reference,
         direction=direction,
+    )
+
+
+def permissive_filters() -> ITDFilter:
+    return ITDFilter(
+        min_supporting_fragment_count=1,
+        min_spanning_fragment_count=0,
+        min_observed_supporting_fragment_fraction=0,
     )
 
 
@@ -40,7 +51,31 @@ def make_insertion(
     )
 
 
-def test_call_exact_itds_reports_support_coverage_and_vaf() -> None:
+def test_itd_call_rejects_fraction_inconsistent_with_fragment_counts() -> None:
+    itd = ITD(
+        insertion=make_insertion("read", start=2, sequence="CCCGGG"),
+        tandem_start=3,
+        tandem_sequence="CCCGGG",
+        orientation="downstream",
+    )
+
+    with pytest.raises(ValueError, match="must equal"):
+        ITDCall(
+            itd=itd,
+            supporting_fragment_count=1,
+            spanning_fragment_count=2,
+            observed_supporting_fragment_fraction=0.25,
+        )
+    with pytest.raises(ValueError, match="must equal"):
+        ITDCall(
+            itd=itd,
+            supporting_fragment_count=1,
+            spanning_fragment_count=2,
+            observed_supporting_fragment_fraction=float("nan"),
+        )
+
+
+def test_call_exact_itds_reports_supporting_and_spanning_fragment_fraction() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -62,25 +97,210 @@ def test_call_exact_itds_reports_support_coverage_and_vaf() -> None:
     ]
 
     assert call_exact_itds(alignments, reference) == [
-            ITDCall(
-                itd=ITD(
-                    insertion=make_insertion(
-                        "itd-read-1",
-                        start=8,
-                        sequence="CCCGGG",
-                    ),
-                    tandem_start=3,
-                    tandem_sequence="CCCGGG",
-                    orientation="downstream",
+        ITDCall(
+            itd=ITD(
+                insertion=make_insertion(
+                    "itd-read-1",
+                    start=8,
+                    sequence="CCCGGG",
+                ),
+                tandem_start=3,
+                tandem_sequence="CCCGGG",
+                orientation="upstream",
             ),
-            support_count=3,
-            coverage=10,
-            vaf=0.3,
+            supporting_fragment_count=3,
+            spanning_fragment_count=10,
+            observed_supporting_fragment_fraction=0.3,
         )
     ]
 
 
-def test_call_exact_itds_merges_upstream_and_downstream_representations() -> None:
+def test_call_exact_itds_counts_concordant_and_single_mate_fragments() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    aligned_reference = "AAACCCGGG------TTT"
+    alignments = [
+        make_alignment(
+            "concordant/1",
+            mutant,
+            mutant,
+            aligned_reference,
+            fragment_id="concordant",
+        ),
+        make_alignment(
+            "concordant/2",
+            mutant,
+            mutant,
+            aligned_reference,
+            direction="reverse",
+            fragment_id="concordant",
+        ),
+        make_alignment(
+            "single/1",
+            mutant,
+            mutant,
+            aligned_reference,
+            fragment_id="single",
+        ),
+    ]
+
+    call = call_exact_itds(alignments, reference, filters=permissive_filters())[0]
+
+    assert call.supporting_fragment_count == 2
+    assert call.spanning_fragment_count == 2
+    assert call.observed_supporting_fragment_fraction == 1
+    assert call.concordant_fragment_count == 1
+    assert call.single_mate_fragment_count == 1
+    assert call.discordant_fragment_count == 0
+    assert call.unresolved_fragment_count == 0
+
+
+def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "discordant/1",
+            mutant,
+            mutant,
+            "AAACCCGGG------TTT",
+            fragment_id="discordant",
+        ),
+        make_alignment(
+            "discordant/2",
+            reference,
+            reference,
+            reference,
+            direction="reverse",
+            fragment_id="discordant",
+        ),
+    ]
+
+    call = call_exact_itds(alignments, reference, filters=permissive_filters())[0]
+
+    assert call.supporting_fragment_count == 0
+    assert call.spanning_fragment_count == 0
+    assert call.observed_supporting_fragment_fraction == 0
+    assert call.discordant_fragment_count == 1
+    assert call.filter_reasons == (
+        "ONLY_DISCORDANT_MATE_EVIDENCE",
+        "LOW_SUPPORT",
+    )
+
+
+def test_call_exact_itds_excludes_mutually_incompatible_mate_candidates() -> None:
+    reference = "AAACCCGGGTTTAAACCCGGG"
+    aligned_reference = "AAACCCGGG------TTTAAACCCGGG"
+    alignments = [
+        make_alignment(
+            "discordant/1",
+            "AAACCCGGGCCCGGGTTTAAACCCGGG",
+            "AAACCCGGGCCCGGGTTTAAACCCGGG",
+            aligned_reference,
+            fragment_id="discordant",
+        ),
+        make_alignment(
+            "discordant/2",
+            "AAACCCGGGTTTAAATTTAAACCCGGG",
+            "AAACCCGGGTTTAAATTTAAACCCGGG",
+            aligned_reference,
+            direction="reverse",
+            fragment_id="discordant",
+        ),
+    ]
+
+    calls = call_exact_itds(alignments, reference, filters=permissive_filters())
+
+    assert len(calls) == 2
+    assert {call.itd.tandem_sequence for call in calls} == {"CCCGGG", "TTTAAA"}
+    assert all(call.supporting_fragment_count == 0 for call in calls)
+    assert all(call.spanning_fragment_count == 0 for call in calls)
+    assert all(call.discordant_fragment_count == 1 for call in calls)
+    assert all(
+        call.filter_reasons
+        == ("ONLY_DISCORDANT_MATE_EVIDENCE", "LOW_SUPPORT")
+        for call in calls
+    )
+
+
+def test_call_exact_itds_marks_multiple_same_mate_candidates_unresolved() -> None:
+    reference = "AAACCCGGGTTTAAACCCGGG"
+    aligned_reference = "AAACCCGGG------TTTAAACCCGGG"
+    alignments = [
+        make_alignment(
+            "ambiguous/alignment-1",
+            "AAACCCGGGCCCGGGTTTAAACCCGGG",
+            "AAACCCGGGCCCGGGTTTAAACCCGGG",
+            aligned_reference,
+            fragment_id="ambiguous",
+        ),
+        make_alignment(
+            "ambiguous/alignment-2",
+            "AAACCCGGGTTTAAATTTAAACCCGGG",
+            "AAACCCGGGTTTAAATTTAAACCCGGG",
+            aligned_reference,
+            fragment_id="ambiguous",
+        ),
+    ]
+
+    calls = call_exact_itds(alignments, reference, filters=permissive_filters())
+
+    assert len(calls) == 2
+    assert all(call.supporting_fragment_count == 0 for call in calls)
+    assert all(call.spanning_fragment_count == 0 for call in calls)
+    assert all(call.unresolved_fragment_count == 1 for call in calls)
+    assert all(
+        call.filter_reasons
+        == ("ONLY_UNRESOLVED_MATE_EVIDENCE", "LOW_SUPPORT")
+        for call in calls
+    )
+
+
+def test_call_fuzzy_itds_does_not_hide_mate_sequence_disagreement() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "fuzzy-disagreement/1",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+            fragment_id="fuzzy-disagreement",
+        ),
+        make_alignment(
+            "fuzzy-disagreement/2",
+            "AAACCCGGGCCCGGATTT",
+            "AAACCCGGGCCCGGATTT",
+            "AAACCCGGG------TTT",
+            direction="reverse",
+            fragment_id="fuzzy-disagreement",
+        ),
+    ]
+
+    calls, representatives = call_fuzzy_itds_with_representatives(
+        alignments,
+        reference,
+        max_mismatches=1,
+        filters=permissive_filters(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].supporting_fragment_count == 0
+    assert calls[0].spanning_fragment_count == 0
+    assert calls[0].unresolved_fragment_count == 1
+    assert calls[0].filter_reasons == (
+        "ONLY_UNRESOLVED_MATE_EVIDENCE",
+        "LOW_SUPPORT",
+    )
+    assert all(
+        representative.support_count == 0 for representative in representatives
+    )
+    assert all(
+        representative.insert_sequence_supports == ()
+        for representative in representatives
+    )
+
+
+def test_call_exact_itds_keeps_distinct_breakpoints_separate() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -111,10 +331,45 @@ def test_call_exact_itds_merges_upstream_and_downstream_representations() -> Non
 
     calls = call_exact_itds(alignments, reference)
 
-    assert len(calls) == 1
-    assert calls[0].support_count == 5
-    assert calls[0].coverage == 12
-    assert calls[0].vaf == 5 / 12
+    assert len(calls) == 2
+    assert [call.itd.insertion.start for call in calls] == [2, 8]
+    assert [call.supporting_fragment_count for call in calls] == [3, 2]
+    assert [call.spanning_fragment_count for call in calls] == [12, 12]
+    assert [call.observed_supporting_fragment_fraction for call in calls] == [
+        3 / 12,
+        2 / 12,
+    ]
+
+
+def test_call_exact_itds_are_independent_of_input_order_for_distinct_breakpoints() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "upstream-breakpoint",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+        ),
+        make_alignment(
+            "downstream-breakpoint",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAA------CCCGGGTTT",
+        ),
+    ]
+
+    calls = call_exact_itds(alignments, reference)
+    reversed_calls = call_exact_itds(list(reversed(alignments)), reference)
+
+    assert calls == reversed_calls
+    assert [
+        (
+            call.itd.insertion.start,
+            call.supporting_fragment_count,
+            call.observed_supporting_fragment_fraction,
+        )
+        for call in calls
+    ] == [(2, 1, 0.5), (8, 1, 0.5)]
 
 
 def test_call_exact_itds_counts_overlapping_mates_once_per_fragment() -> None:
@@ -149,9 +404,9 @@ def test_call_exact_itds_counts_overlapping_mates_once_per_fragment() -> None:
     calls = call_exact_itds(alignments, reference)
 
     assert len(calls) == 1
-    assert calls[0].support_count == 1
-    assert calls[0].coverage == 2
-    assert calls[0].vaf == 0.5
+    assert calls[0].supporting_fragment_count == 1
+    assert calls[0].spanning_fragment_count == 2
+    assert calls[0].observed_supporting_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_reports_unique_supporting_sequences() -> None:
@@ -189,9 +444,9 @@ def test_call_exact_itds_reports_unique_supporting_sequences() -> None:
     calls = call_exact_itds(alignments, reference)
 
     assert len(calls) == 1
-    assert calls[0].support_count == 3
-    assert calls[0].coverage == 6
-    assert calls[0].vaf == 0.5
+    assert calls[0].supporting_fragment_count == 3
+    assert calls[0].spanning_fragment_count == 6
+    assert calls[0].observed_supporting_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_ignores_non_itd_insertions() -> None:
@@ -210,6 +465,73 @@ def test_call_exact_itds_ignores_non_itd_insertions() -> None:
     ]
 
     assert call_exact_itds(alignments, reference) == []
+
+
+def test_call_exact_itds_ignores_reference_match_away_from_breakpoint() -> None:
+    reference = "AAACCCGGGTTTAAATTTGGG"
+    alignments = [
+        make_alignment(
+            "remote-copy-read",
+            "AAACCCGGGTTTAAACCCGGGTTTGGG",
+            "AAACCCGGGTTTAAACCCGGGTTTGGG",
+            "AAACCCGGGTTTAAA------TTTGGG",
+        )
+    ]
+
+    assert call_exact_itds(alignments, reference) == []
+
+
+def test_call_exact_itds_marks_read_edge_itds_as_partial_observations() -> None:
+    reference = "AAACCCGGG"
+    alignment = make_alignment(
+        "partial-itd",
+        "AAACCCGGGCCCGGG",
+        "AAACCCGGGCCCGGG",
+        "AAACCCGGG------",
+    )
+
+    calls = call_exact_itds(
+        [alignment],
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == "CCCGGG"
+    assert calls[0].itd.is_partial_observation
+    assert calls[0].status == "FAIL"
+    assert calls[0].filter_reasons == ("PARTIAL_OBSERVATION",)
+
+
+def test_call_exact_itds_reconstructs_fully_observed_long_itd() -> None:
+    reference = "AAACCCGGGTTTAAACCCGGGTTT"
+    tandem = "CCCGGGTTTAAA"
+    alignment = make_alignment(
+        "long-itd",
+        f"AAA{tandem}{reference[3:]}",
+        f"AAA{tandem}{reference[3:]}",
+        f"AAA{'-' * len(tandem)}{reference[3:]}",
+    )
+
+    calls = call_exact_itds(
+        [alignment],
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == tandem
+    assert calls[0].itd.length == len(tandem)
+    assert not calls[0].itd.is_partial_observation
+    assert calls[0].status == "PASS"
 
 
 def test_call_exact_itds_returns_sorted_calls() -> None:
@@ -237,6 +559,59 @@ def test_call_exact_itds_returns_sorted_calls() -> None:
     ]
 
 
+def test_lower_insert_threshold_also_allows_three_base_tandem_by_default() -> None:
+    reference = "AAACCCGGGTTT"
+    alignment = make_alignment(
+        "three-base-itd",
+        "AAACCCCCCGGGTTT",
+        "AAACCCCCCGGGTTT",
+        "AAA---CCCGGGTTT",
+    )
+
+    calls = call_exact_itds(
+        [alignment],
+        reference,
+        min_insert_length=3,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == "CCC"
+    assert call_exact_itds(
+        [alignment],
+        reference,
+        min_insert_length=3,
+        min_tandem_length=6,
+    ) == []
+
+
+def test_out_of_frame_insertion_filter_is_explicitly_configurable() -> None:
+    reference = "AAACCCGGGTTT"
+    alignment = make_alignment(
+        "out-of-frame-itd",
+        "AAACCCACCCGGGTTT",
+        "AAACCCACCCGGGTTT",
+        "AAA----CCCGGGTTT",
+    )
+
+    assert call_exact_itds(
+        [alignment],
+        reference,
+        min_insert_length=4,
+        min_tandem_length=3,
+    ) == []
+    calls = call_exact_itds(
+        [alignment],
+        reference,
+        min_insert_length=4,
+        min_tandem_length=3,
+        require_in_frame=False,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == "CCC"
+    assert calls[0].itd.spacer_suffix == "A"
+
+
 def test_call_exact_itds_marks_call_as_fail_when_support_threshold_is_not_met() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
@@ -252,12 +627,87 @@ def test_call_exact_itds_marks_call_as_fail_when_support_threshold_is_not_met() 
     calls = call_exact_itds(
         alignments,
         reference,
-        filters=ITDFilter(min_support_count=2),
+        filters=ITDFilter(
+            min_supporting_fragment_count=2,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+        ),
     )
 
     assert len(calls) == 1
     assert calls[0].status == "FAIL"
     assert calls[0].filter_reasons == ("LOW_SUPPORT",)
+
+
+def test_default_call_filters_do_not_pass_a_single_fragment_candidate() -> None:
+    reference = "AAACCCGGGTTT"
+    alignment = make_alignment(
+        "single-fragment",
+        "AAACCCGGGCCCGGGTTT",
+        "AAACCCGGGCCCGGGTTT",
+        "AAACCCGGG------TTT",
+    )
+
+    calls = call_exact_itds([alignment], reference)
+
+    assert calls[0].status == "FAIL"
+    assert calls[0].filter_reasons == ("LOW_SUPPORT", "LOW_COVERAGE")
+
+
+def test_filters_on_observed_supporting_fragment_fraction() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "supporting-fragment",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+        )
+    ] + [
+        make_alignment(f"spanning-fragment-{index}", reference, reference, reference)
+        for index in range(9)
+    ]
+
+    calls = call_exact_itds(
+        alignments,
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=10,
+            min_observed_supporting_fragment_fraction=0.2,
+        ),
+    )
+
+    assert calls[0].observed_supporting_fragment_fraction == 0.1
+    assert calls[0].filter_reasons == ("LOW_SUPPORTING_FRAGMENT_FRACTION",)
+
+
+def test_call_exact_itds_marks_one_direction_only_support_as_direction_biased() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            f"forward-only-{index}",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+        )
+        for index in range(5)
+    ]
+
+    calls = call_exact_itds(
+        alignments,
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+        ),
+    )
+
+    assert calls[0].forward_support_count == 5
+    assert calls[0].reverse_support_count == 0
+    assert calls[0].status == "FAIL"
+    assert calls[0].filter_reasons == ("DIRECTION_BIAS",)
 
 
 def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
@@ -288,7 +738,7 @@ def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
     )
 
     assert len(calls) == 1
-    assert calls[0].support_count == 2
+    assert calls[0].supporting_fragment_count == 2
     assert len(representatives) == 1
     assert representatives[0].support_count == 2
     assert representatives[0].exact_support_count == 1
@@ -339,7 +789,7 @@ def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches(
     )
 
     assert len(calls) == 1
-    assert calls[0].support_count == 3
+    assert calls[0].supporting_fragment_count == 3
     assert calls[0].itd == ITD(
         insertion=Insertion(
             read_id="exact-fragment-1/1",

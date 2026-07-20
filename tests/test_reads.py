@@ -7,6 +7,7 @@ from itdiscover.reads import (
     orient_read,
     passes_read_filters,
     preprocess_fragments,
+    preprocess_fragments_with_metrics,
     preprocess_reads,
     trim_primers,
     trim_terminal_ns,
@@ -150,23 +151,23 @@ def test_trim_primers_trims_forward_reads() -> None:
     )
 
 
-def test_trim_primers_trims_reverse_reads() -> None:
-    read = SequencingRead(
+def test_trim_primers_trims_raw_r2_reverse_primer_after_orientation() -> None:
+    raw_r2 = "AAACCCAAACCCGGGTTT"
+    read = orient_read(
         read_id="read-2",
-        sequence="GGGCGTAAA",
-        qualities=tuple(range(9)),
+        fragment_id="read-2",
+        sequence=raw_r2,
+        qualities=tuple(range(len(raw_r2))),
         direction="reverse",
     )
 
     assert trim_primers(
         read,
-        ReadTrimSettings(
-            reverse_primer="CGT",
-        ),
+        ReadTrimSettings(reverse_primer="AAACCC"),
     ) == SequencingRead(
         read_id="read-2",
-        sequence="GGG",
-        qualities=(0, 1, 2),
+        sequence="AAACCCGGGTTT",
+        qualities=tuple(range(17, 5, -1)),
         direction="reverse",
     )
 
@@ -247,3 +248,59 @@ def test_preprocess_fragments_returns_passing_reads_from_paired_fragments() -> N
     assert preprocess_fragments([fragment], min_length=4, min_mean_quality=30) == [
         SequencingRead("fragment-1/1", "ACGT", (30,) * 4, "forward", fragment_id="fragment-1")
     ]
+
+
+def test_preprocess_fragments_retains_rejection_and_direction_metrics() -> None:
+    fragments = [
+        Fragment(
+            fragment_id="passing",
+            forward_read=SequencingRead(
+                "passing/1",
+                "AAAACGT",
+                (40,) * 7,
+                "forward",
+                fragment_id="passing",
+            ),
+            reverse_read=SequencingRead(
+                "passing/2",
+                "ACGT",
+                (40,) * 4,
+                "reverse",
+                fragment_id="passing",
+            ),
+        ),
+        Fragment(
+            fragment_id="missing-primer",
+            forward_read=SequencingRead(
+                "missing-primer/1",
+                "TTTACGT",
+                (40,) * 7,
+                "forward",
+                fragment_id="missing-primer",
+            ),
+            reverse_read=SequencingRead(
+                "missing-primer/2",
+                "ACGT",
+                (40,) * 4,
+                "reverse",
+                fragment_id="missing-primer",
+            ),
+        ),
+    ]
+
+    result = preprocess_fragments_with_metrics(
+        fragments,
+        min_length=4,
+        min_mean_quality=30,
+        trimming=ReadTrimSettings(forward_primer="AAA"),
+    )
+
+    assert result.metrics.input_fragment_count == 2
+    assert result.metrics.input_read_count == 4
+    assert result.metrics.primer_retained_forward_reads == 1
+    assert result.metrics.primer_retained_reverse_reads is None
+    assert result.metrics.primer_failed_read_count == 1
+    assert result.metrics.passing_read_count == 3
+    assert result.metrics.passing_forward_read_count == 1
+    assert result.metrics.passing_reverse_read_count == 2
+    assert result.metrics.usable_fragment_count == 2

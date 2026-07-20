@@ -2,12 +2,17 @@
 
 import argparse
 import csv
+import hashlib
 import html
 from pathlib import Path
 from typing import TextIO
 
 from . import __version__
-from .alignment import align_read_to_reference
+from .alignment import (
+    AlignmentEvidenceFilter,
+    align_read_to_reference,
+    passes_alignment_evidence_filters,
+)
 from .calls import (
     ITDCall,
     ITDFilter,
@@ -16,9 +21,30 @@ from .calls import (
     call_fuzzy_itds_with_representatives,
 )
 from .fastq import read_paired_fastq
-from .insertions import Alignment
+from .insertions import (
+    DEFAULT_ADAPTER_SEQUENCES,
+    Alignment,
+    InsertionEvidenceFilter,
+)
 from .itds import ITD
-from .reads import ReadTrimSettings, preprocess_fragments
+from .reads import ReadTrimSettings, preprocess_fragments_with_metrics
+from .results import (
+    SampleQCThresholds,
+    SampleResult,
+    alignment_metrics,
+    build_sample_result,
+    coverage_metrics,
+    error_sample_result,
+)
+
+
+COORDINATE_CONVENTION = (
+    "Reference-local, zero-based. Insertion coordinate is the reference base "
+    "immediately before the insertion (-1 means before the first base). Tandem "
+    "start is zero-based; tandem end is zero-based and inclusive. Tandem "
+    "orientation is upstream when the copied interval ends at the insertion "
+    "coordinate and downstream when it starts at the following reference base."
+)
 
 
 class OptionalDefaultsHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
@@ -71,7 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reverse-primer",
-        help="Optional reverse primer sequence to trim from the 3' end of oriented R2 reads.",
+        help=(
+            "Optional reverse primer sequence as it occurs at the 5' end of raw R2; "
+            "its reverse complement is trimmed from oriented R2 reads."
+        ),
     )
     parser.add_argument(
         "--min-read-length",
@@ -87,32 +116,162 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-insert-length",
-        type=int,
+        type=_positive_int,
         default=6,
         help="Minimum insertion length to consider.",
     )
     parser.add_argument(
+        "--min-tandem-length",
+        type=_positive_int,
+        help=(
+            "Minimum copied tandem-tract length; defaults to --min-insert-length."
+        ),
+    )
+    parser.add_argument(
+        "--require-in-frame",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require fully observed insertion length to be divisible by three. "
+            "Use --no-require-in-frame to retain out-of-frame candidates."
+        ),
+    )
+    parser.add_argument(
         "--max-mismatches",
         type=_non_negative_int,
-        help="Allow fuzzy ITD calls with at most this many mismatches.",
+        help=(
+            "Maximum mismatches allowed in the copied tandem tract; "
+            "0 is equivalent to exact mode."
+        ),
     )
     parser.add_argument(
+        "--min-supporting-fragment-count",
         "--min-support-count",
-        type=int,
-        default=1,
-        help="Minimum fragment support count required for a call to pass filtering.",
+        dest="min_supporting_fragment_count",
+        type=_positive_int,
+        default=3,
+        help="Minimum supporting fragment count required to pass filtering.",
     )
     parser.add_argument(
+        "--min-spanning-fragment-count",
         "--min-coverage",
-        type=int,
-        default=0,
-        help="Minimum coverage required for a call to pass filtering.",
+        dest="min_spanning_fragment_count",
+        type=_non_negative_int,
+        default=10,
+        help="Minimum locally spanning fragment count required to pass filtering.",
     )
     parser.add_argument(
+        "--min-supporting-fragment-fraction",
         "--min-vaf",
+        dest="min_supporting_fragment_fraction",
+        type=_fraction,
+        default=0.01,
+        help=(
+            "Minimum observed supporting-fragment fraction required to pass; "
+            "this is not a validated VAF or allelic ratio."
+        ),
+    )
+    parser.add_argument(
+        "--max-single-direction-fraction",
+        type=_direction_fraction,
+        default=0.90,
+        help=(
+            "Largest allowed fraction of supporting directional observations "
+            "from R1 or R2 once the minimum observation count is reached."
+        ),
+    )
+    parser.add_argument(
+        "--min-directional-observations",
+        type=_positive_int,
+        default=5,
+        help="Minimum R1/R2 supporting observations for direction-bias filtering.",
+    )
+    parser.add_argument(
+        "--min-alignment-identity",
+        type=_fraction,
+        default=0.90,
+        help="Minimum identity across read bases aligned to reference bases.",
+    )
+    parser.add_argument(
+        "--min-on-target-fraction",
+        type=_fraction,
+        default=0.80,
+        help="Minimum fraction of the shorter sequence aligned to the target.",
+    )
+    parser.add_argument(
+        "--min-alignment-score",
         type=float,
-        default=0.0,
-        help="Minimum VAF required for a call to pass filtering.",
+        help="Optional minimum raw pairwise alignment score.",
+    )
+    parser.add_argument(
+        "--reject-ambiguous-alignments",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Reject reads with multiple optimal placements. Enable only when "
+            "the assay cannot normalize equivalent tandem-gap placements."
+        ),
+    )
+    parser.add_argument(
+        "--min-junction-quality",
+        type=_non_negative_int,
+        default=30,
+        help="Minimum Phred quality for inserted bases and junction anchors.",
+    )
+    parser.add_argument(
+        "--junction-flank-size",
+        type=_positive_int,
+        default=3,
+        help="High-quality read bases required on each side of an insertion.",
+    )
+    parser.add_argument(
+        "--adapter-sequence",
+        action="append",
+        default=list(DEFAULT_ADAPTER_SEQUENCES),
+        help=(
+            "Adapter sequence to reject in insertion evidence; may be repeated. "
+            "Two standard Illumina adapters are checked by default."
+        ),
+    )
+    parser.add_argument(
+        "--min-adapter-match-length",
+        type=_positive_int,
+        default=12,
+        help="Minimum exact adapter motif length rejected in insertion evidence.",
+    )
+    parser.add_argument(
+        "--sample-id",
+        help="Sample identifier shown in reports; defaults to the R1 filename stem.",
+    )
+    parser.add_argument(
+        "--min-usable-fragment-count",
+        type=_positive_int,
+        default=10,
+        help="Minimum post-preprocessing fragments required for sample QC.",
+    )
+    parser.add_argument(
+        "--min-qc-reads-per-direction",
+        type=_non_negative_int,
+        default=1,
+        help="Minimum alignment-passing R1 and R2 reads required for sample QC.",
+    )
+    parser.add_argument(
+        "--min-alignment-pass-fraction",
+        type=_fraction,
+        default=0.80,
+        help="Minimum fraction of preprocessed reads passing alignment filters.",
+    )
+    parser.add_argument(
+        "--min-median-interbase-coverage",
+        type=_non_negative_int,
+        default=10,
+        help="Minimum median fragment coverage across target inter-base sites.",
+    )
+    parser.add_argument(
+        "--min-primer-retention-fraction",
+        type=_fraction,
+        default=0.80,
+        help="Minimum per-direction primer retention when a primer is configured.",
     )
     parser.add_argument(
         "--output",
@@ -131,34 +290,80 @@ def main(argv: list[str] | None = None) -> int:
     """Run the ITDiscover CLI."""
     parser = build_parser()
     args = parser.parse_args(argv)
-    return _run_call_command(args)
+    try:
+        return _run_call_command(args)
+    except Exception as error:
+        _write_analysis_error_reports(args, error)
+        raise
 
 
 def _run_call_command(args: argparse.Namespace) -> int:
-    reference = _read_single_sequence_fasta(Path(args.reference))
+    reference_id, reference = _read_single_sequence_fasta_record(
+        Path(args.reference)
+    )
+    reference_sha256 = hashlib.sha256(reference.encode("ascii")).hexdigest()
     fragments = read_paired_fastq(args.r1, args.r2)
     trimming = _build_trim_settings(args)
-    processed_reads = preprocess_fragments(
+    preprocessing_result = preprocess_fragments_with_metrics(
         fragments,
         min_length=args.min_read_length,
         min_mean_quality=args.min_mean_quality,
         trimming=trimming,
     )
-    alignments = [
+    processed_reads = list(preprocessing_result.reads)
+    unfiltered_alignments = [
         align_read_to_reference(read, reference)
         for read in processed_reads
     ]
+    alignment_filters = AlignmentEvidenceFilter(
+        min_identity=args.min_alignment_identity,
+        min_on_target_fraction=args.min_on_target_fraction,
+        min_score=args.min_alignment_score,
+        reject_ambiguous=args.reject_ambiguous_alignments,
+    )
+    alignments = [
+        alignment
+        for alignment in unfiltered_alignments
+        if passes_alignment_evidence_filters(alignment, alignment_filters)
+    ]
+    sample_alignment_metrics = alignment_metrics(len(processed_reads), alignments)
+    sample_coverage_metrics = coverage_metrics(alignments, len(reference))
+    qc_thresholds = SampleQCThresholds(
+        min_usable_fragment_count=args.min_usable_fragment_count,
+        min_passing_reads_per_direction=args.min_qc_reads_per_direction,
+        min_alignment_pass_fraction=args.min_alignment_pass_fraction,
+        min_median_interbase_coverage=args.min_median_interbase_coverage,
+        min_primer_retention_fraction=args.min_primer_retention_fraction,
+    )
+    insertion_filters = InsertionEvidenceFilter(
+        min_junction_quality=args.min_junction_quality,
+        junction_flank_size=args.junction_flank_size,
+        adapter_sequences=tuple(args.adapter_sequence),
+        min_adapter_match_length=args.min_adapter_match_length,
+    )
     filters = ITDFilter(
-        min_support_count=args.min_support_count,
-        min_coverage=args.min_coverage,
-        min_vaf=args.min_vaf,
+        min_supporting_fragment_count=args.min_supporting_fragment_count,
+        min_spanning_fragment_count=args.min_spanning_fragment_count,
+        min_observed_supporting_fragment_fraction=(
+            args.min_supporting_fragment_fraction
+        ),
+        max_single_direction_fraction=args.max_single_direction_fraction,
+        min_directional_observations=args.min_directional_observations,
+    )
+    min_tandem_length = (
+        args.min_insert_length
+        if args.min_tandem_length is None
+        else args.min_tandem_length
     )
     if args.max_mismatches is None:
         calls, representatives = call_exact_itds_with_representatives(
             alignments,
             reference,
             min_insert_length=args.min_insert_length,
+            min_tandem_length=min_tandem_length,
+            require_in_frame=args.require_in_frame,
             filters=filters,
+            evidence_filter=insertion_filters,
         )
     else:
         calls, representatives = call_fuzzy_itds_with_representatives(
@@ -166,8 +371,19 @@ def _run_call_command(args: argparse.Namespace) -> int:
             reference,
             max_mismatches=args.max_mismatches,
             min_insert_length=args.min_insert_length,
+            min_tandem_length=min_tandem_length,
+            require_in_frame=args.require_in_frame,
             filters=filters,
+            evidence_filter=insertion_filters,
         )
+    sample_result = build_sample_result(
+        sample_id=_sample_id(args),
+        calls=calls,
+        preprocessing=preprocessing_result.metrics,
+        alignment=sample_alignment_metrics,
+        coverage=sample_coverage_metrics,
+        thresholds=qc_thresholds,
+    )
     if args.output:
         _write_unique_support_alignment_html_report(
             args.output,
@@ -175,15 +391,39 @@ def _run_call_command(args: argparse.Namespace) -> int:
             representatives,
             filters=filters,
             max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
+            alignment_filters=alignment_filters,
+            insertion_filters=insertion_filters,
+            sample_result=sample_result,
+            qc_thresholds=qc_thresholds,
+            min_insert_length=args.min_insert_length,
+            min_tandem_length=min_tandem_length,
+            require_in_frame=args.require_in_frame,
+            reference_id=reference_id,
+            reference_length=len(reference),
+            reference_sha256=reference_sha256,
         )
     if args.output_tsv:
         _write_tsv_call_report(
             args.output_tsv,
             calls,
             max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
-            min_support_count=filters.min_support_count,
-            min_coverage=filters.min_coverage,
-            min_vaf=filters.min_vaf,
+            min_supporting_fragment_count=filters.min_supporting_fragment_count,
+            min_spanning_fragment_count=filters.min_spanning_fragment_count,
+            min_supporting_fragment_fraction=(
+                filters.min_observed_supporting_fragment_fraction
+            ),
+            max_single_direction_fraction=filters.max_single_direction_fraction,
+            min_directional_observations=filters.min_directional_observations,
+            alignment_filters=alignment_filters,
+            insertion_filters=insertion_filters,
+            sample_result=sample_result,
+            qc_thresholds=qc_thresholds,
+            min_insert_length=args.min_insert_length,
+            min_tandem_length=min_tandem_length,
+            require_in_frame=args.require_in_frame,
+            reference_id=reference_id,
+            reference_length=len(reference),
+            reference_sha256=reference_sha256,
         )
     return 0
 
@@ -209,6 +449,27 @@ def _non_negative_int(value: str) -> int:
     return parsed
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
+def _fraction(value: str) -> float:
+    parsed = float(value)
+    if not 0 <= parsed <= 1:
+        raise argparse.ArgumentTypeError("value must be between 0 and 1")
+    return parsed
+
+
+def _direction_fraction(value: str) -> float:
+    parsed = _fraction(value)
+    if parsed < 0.5:
+        raise argparse.ArgumentTypeError("value must be between 0.5 and 1")
+    return parsed
+
+
 def _build_trim_settings(args: argparse.Namespace) -> ReadTrimSettings | None:
     if not any(
         getattr(args, field) is not None
@@ -224,22 +485,125 @@ def _build_trim_settings(args: argparse.Namespace) -> ReadTrimSettings | None:
     )
 
 
+def _sample_id(args: argparse.Namespace) -> str:
+    if args.sample_id:
+        return args.sample_id
+    name = Path(args.r1).name
+    for suffix in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    for suffix in ("_R1", "-R1", ".R1"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name
+
+
+def _write_analysis_error_reports(
+    args: argparse.Namespace,
+    error: Exception,
+) -> None:
+    result = error_sample_result(_sample_id(args), error)
+    reference_id, reference_length, reference_sha256 = (
+        _reference_report_metadata(Path(args.reference))
+    )
+    qc_thresholds = SampleQCThresholds(
+        min_usable_fragment_count=args.min_usable_fragment_count,
+        min_passing_reads_per_direction=args.min_qc_reads_per_direction,
+        min_alignment_pass_fraction=args.min_alignment_pass_fraction,
+        min_median_interbase_coverage=args.min_median_interbase_coverage,
+        min_primer_retention_fraction=args.min_primer_retention_fraction,
+    )
+    if args.output:
+        try:
+            _write_unique_support_alignment_html_report(
+                args.output,
+                [],
+                [],
+                max_mismatches=(
+                    0 if args.max_mismatches is None else args.max_mismatches
+                ),
+                sample_result=result,
+                qc_thresholds=qc_thresholds,
+                min_insert_length=args.min_insert_length,
+                min_tandem_length=(
+                    args.min_insert_length
+                    if args.min_tandem_length is None
+                    else args.min_tandem_length
+                ),
+                require_in_frame=args.require_in_frame,
+                reference_id=reference_id,
+                reference_length=reference_length,
+                reference_sha256=reference_sha256,
+            )
+        except Exception:
+            pass
+    if args.output_tsv:
+        try:
+            _write_tsv_call_report(
+                args.output_tsv,
+                [],
+                max_mismatches=(
+                    0 if args.max_mismatches is None else args.max_mismatches
+                ),
+                min_supporting_fragment_count=args.min_supporting_fragment_count,
+                min_spanning_fragment_count=args.min_spanning_fragment_count,
+                min_supporting_fragment_fraction=(
+                    args.min_supporting_fragment_fraction
+                ),
+                sample_result=result,
+                qc_thresholds=qc_thresholds,
+                min_insert_length=args.min_insert_length,
+                min_tandem_length=(
+                    args.min_insert_length
+                    if args.min_tandem_length is None
+                    else args.min_tandem_length
+                ),
+                require_in_frame=args.require_in_frame,
+                reference_id=reference_id,
+                reference_length=reference_length,
+                reference_sha256=reference_sha256,
+            )
+        except Exception:
+            pass
+
+
 def _format_filter_reasons(call: ITDCall) -> str:
     return "." if not call.filter_reasons else ";".join(call.filter_reasons)
 
 
 def _read_single_sequence_fasta(path: Path) -> str:
+    """Return the only sequence in a FASTA file."""
+    _, sequence = _read_single_sequence_fasta_record(path)
+    return sequence
+
+
+def _reference_report_metadata(path: Path) -> tuple[str, int | None, str | None]:
+    try:
+        reference_id, sequence = _read_single_sequence_fasta_record(path)
+    except Exception:
+        return path.name, None, None
+    return (
+        reference_id,
+        len(sequence),
+        hashlib.sha256(sequence.encode("ascii")).hexdigest(),
+    )
+
+
+def _read_single_sequence_fasta_record(path: Path) -> tuple[str, str]:
     with path.open(mode="rt", encoding="utf-8") as handle:
-        sequences = list(_iter_fasta_sequences(handle))
-    if not sequences:
+        records = list(_iter_fasta_records(handle))
+    if not records:
         raise ValueError("reference FASTA does not contain a sequence")
-    if len(sequences) > 1:
+    if len(records) > 1:
         raise ValueError("reference FASTA must contain exactly one sequence")
-    return sequences[0]
+    return records[0]
 
 
-def _iter_fasta_sequences(handle: TextIO) -> list[str]:
-    sequences: list[str] = []
+def _iter_fasta_records(handle: TextIO) -> list[tuple[str, str]]:
+    records: list[tuple[str, str]] = []
+    current_name: str | None = None
     current_parts: list[str] = []
 
     for raw_line in handle:
@@ -247,15 +611,25 @@ def _iter_fasta_sequences(handle: TextIO) -> list[str]:
         if not line:
             continue
         if line.startswith(">"):
-            if current_parts:
-                sequences.append("".join(current_parts))
-                current_parts = []
+            if current_name is not None:
+                records.append((current_name, "".join(current_parts)))
+            current_name = line[1:].strip()
+            if not current_name:
+                raise ValueError("reference FASTA header must not be empty")
+            current_parts = []
             continue
+        if current_name is None:
+            raise ValueError("reference FASTA sequence must follow a header")
         current_parts.append(line)
 
-    if current_parts:
-        sequences.append("".join(current_parts))
-    return sequences
+    if current_name is not None:
+        records.append((current_name, "".join(current_parts)))
+    return records
+
+
+def _iter_fasta_sequences(handle: TextIO) -> list[str]:
+    """Return FASTA sequences without their record identifiers."""
+    return [sequence for _, sequence in _iter_fasta_records(handle)]
 
 
 def _write_unique_support_alignment_html_report(
@@ -265,12 +639,23 @@ def _write_unique_support_alignment_html_report(
     *,
     filters: ITDFilter | None = None,
     max_mismatches: int | None = None,
+    alignment_filters: AlignmentEvidenceFilter | None = None,
+    insertion_filters: InsertionEvidenceFilter | None = None,
+    sample_result: SampleResult | None = None,
+    qc_thresholds: SampleQCThresholds | None = None,
+    min_insert_length: int = 6,
+    min_tandem_length: int = 6,
+    require_in_frame: bool = True,
+    reference_id: str | None = None,
+    reference_length: int | None = None,
+    reference_sha256: str | None = None,
 ) -> None:
     representatives_by_key: dict[
-        tuple[int, str, str, str, bool], list[UniqueSupportRepresentative]
+        tuple[int, int, str, str, str, bool], list[UniqueSupportRepresentative]
     ] = {}
     for representative in representatives:
         key = (
+            representative.itd.insertion.start,
             representative.itd.tandem_start,
             representative.itd.tandem_sequence,
             representative.itd.spacer_prefix,
@@ -283,7 +668,7 @@ def _write_unique_support_alignment_html_report(
     ordered_calls = sorted(
         calls,
         key=lambda call: (
-            -call.support_count,
+            -call.supporting_fragment_count,
             call.itd.insertion.start,
             call.itd.tandem_start,
             call.itd.tandem_sequence,
@@ -294,6 +679,7 @@ def _write_unique_support_alignment_html_report(
     )
     for call in ordered_calls:
         key = (
+            call.itd.insertion.start,
             call.itd.tandem_start,
             call.itd.tandem_sequence,
             call.itd.spacer_prefix,
@@ -306,7 +692,19 @@ def _write_unique_support_alignment_html_report(
     thresholds_section = _render_html_thresholds_section(
         filters=filters,
         max_mismatches=max_mismatches,
+        alignment_filters=alignment_filters,
+        insertion_filters=insertion_filters,
+        min_insert_length=min_insert_length,
+        min_tandem_length=min_tandem_length,
+        require_in_frame=require_in_frame,
     )
+    sample_summary = _render_html_sample_summary(sample_result, qc_thresholds)
+    reference_summary = _render_html_reference_summary(
+        reference_id,
+        reference_length,
+        reference_sha256,
+    )
+    empty_state = "" if sections else _render_html_empty_state(sample_result)
 
     document = """<!DOCTYPE html>
 <html lang="en">
@@ -429,6 +827,20 @@ def _write_unique_support_alignment_html_report(
       font-size: 15px;
       font-weight: 600;
     }
+    .quantification-note {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+      margin: -4px 0 20px;
+    }
+    .sample-result, .empty-state {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 12px 14px;
+      margin: 0 0 20px;
+    }
+    .sample-result h2 { margin-top: 0; }
     .legend-item {
       display: inline-flex;
       gap: 8px;
@@ -536,13 +948,21 @@ def _write_unique_support_alignment_html_report(
 </head>
 <body>
   <h1>ITDiscover Report</h1>
+  __REFERENCE_SUMMARY__
+  __SAMPLE_SUMMARY__
   __THRESHOLDS__
+  <p class="quantification-note">Observed supporting-fragment fraction = distinct
+  supporting fragment IDs / distinct locally spanning fragment IDs after the
+  configured read, alignment, junction, adapter, and ITD-calling filters.
+  Overlapping mates count once per fragment. PCR duplicates are not collapsed
+  unless they already share a fragment ID.</p>
   <div class="legend">
     <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
     <span class="legend-item"><span class="legend-chip spacer-region">S</span> spacer sequence</span>
     <span class="legend-item"><span class="legend-chip diff">A</span> mismatches</span>
   </div>
+  __EMPTY_STATE__
   __SECTIONS__
 </body>
 </html>
@@ -550,10 +970,11 @@ def _write_unique_support_alignment_html_report(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        document.replace("__THRESHOLDS__", thresholds_section).replace(
-            "__SECTIONS__",
-            "\n".join(sections),
-        ),
+        document.replace("__REFERENCE_SUMMARY__", reference_summary)
+        .replace("__SAMPLE_SUMMARY__", sample_summary)
+        .replace("__THRESHOLDS__", thresholds_section)
+        .replace("__EMPTY_STATE__", empty_state)
+        .replace("__SECTIONS__", "\n".join(sections)),
         encoding="utf-8",
     )
 
@@ -563,9 +984,21 @@ def _write_tsv_call_report(
     calls: list[ITDCall],
     *,
     max_mismatches: int,
-    min_support_count: int,
-    min_coverage: int,
-    min_vaf: float,
+    min_supporting_fragment_count: int,
+    min_spanning_fragment_count: int,
+    min_supporting_fragment_fraction: float,
+    max_single_direction_fraction: float = 0.90,
+    min_directional_observations: int = 5,
+    alignment_filters: AlignmentEvidenceFilter | None = None,
+    insertion_filters: InsertionEvidenceFilter | None = None,
+    sample_result: SampleResult | None = None,
+    qc_thresholds: SampleQCThresholds | None = None,
+    min_insert_length: int = 6,
+    min_tandem_length: int = 6,
+    require_in_frame: bool = True,
+    reference_id: str | None = None,
+    reference_length: int | None = None,
+    reference_sha256: str | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open(mode="wt", encoding="utf-8", newline="") as handle:
@@ -577,19 +1010,77 @@ def _write_tsv_call_report(
                 "Filter Reasons",
                 "Mode",
                 "Max Mismatches",
-                "Insertion Start",
-                "Tandem Start",
-                "Tandem End",
+                "Insertion After Reference Base (0-based; -1=before first)",
+                "Tandem Start (0-based)",
+                "Tandem End (0-based, inclusive)",
                 "Tandem Sequence",
                 "Spacer Prefix",
                 "Spacer Suffix",
                 "Insertion Sequence",
-                "Support Count",
-                "Coverage",
-                "VAF",
-                "Min Support Count",
-                "Min Coverage",
-                "Min VAF",
+                "Read-Edge Observation",
+                "Supporting Fragment Count",
+                "Forward Support Count",
+                "Reverse Support Count",
+                "Spanning Fragment Count",
+                "Observed Supporting-fragment Fraction",
+                "Supporting/Spanning Fragments",
+                "Min Supporting Fragment Count",
+                "Min Spanning Fragment Count",
+                "Min Supporting-fragment Fraction",
+                "Max Single-direction Fraction",
+                "Min Directional Observations",
+                "Min Alignment Identity",
+                "Min On-target Fraction",
+                "Min Alignment Score",
+                "Reject Ambiguous Alignments",
+                "Min Junction Quality",
+                "Junction Flank Size",
+                "Min Adapter Match Length",
+                "Sample ID",
+                "Analysis Status",
+                "QC Status",
+                "Outcome",
+                "QC Reasons",
+                "Analysis Error",
+                "Input Fragment Count",
+                "Input Read Count",
+                "Forward Primer-retained Reads",
+                "Reverse Primer-retained Reads",
+                "Primer-failed Read Count",
+                "Length-failed Read Count",
+                "Quality-failed Read Count",
+                "Preprocessing-passing Read Count",
+                "Preprocessing-passing Forward Reads",
+                "Preprocessing-passing Reverse Reads",
+                "Usable Fragment Count",
+                "Alignment-attempted Read Count",
+                "Alignment-passing Read Count",
+                "Alignment-passing Forward Reads",
+                "Alignment-passing Reverse Reads",
+                "Alignment-passing Fragment Count",
+                "Alignment Pass Fraction",
+                "Minimum Inter-base Coverage",
+                "Median Inter-base Coverage",
+                "Maximum Inter-base Coverage",
+                "Passing Call Count",
+                "Filtered Candidate Count",
+                "QC Min Usable Fragments",
+                "QC Min Reads per Direction",
+                "QC Min Alignment Pass Fraction",
+                "QC Min Median Inter-base Coverage",
+                "QC Min Primer Retention Fraction",
+                "Concordant Fragment Count",
+                "Single-mate Fragment Count",
+                "Discordant Fragment Count",
+                "Unresolved Fragment Count",
+                "Reference FASTA Header",
+                "Reference Length",
+                "Reference Sequence SHA-256",
+                "Coordinate Convention",
+                "Tandem Orientation",
+                "Min Insert Length",
+                "Min Tandem Length",
+                "Require In-frame Insertions",
             ]
         )
         mode = "exact" if max_mismatches == 0 else "fuzzy"
@@ -608,31 +1099,382 @@ def _write_tsv_call_report(
                     call.itd.spacer_prefix or "-",
                     call.itd.spacer_suffix or "-",
                     call.itd.insertion.sequence,
-                    call.support_count,
-                    call.coverage,
-                    f"{call.vaf:.6f}",
-                    min_support_count,
-                    min_coverage,
-                    f"{min_vaf:.6f}",
+                    "Yes" if call.itd.is_partial_observation else "No",
+                    call.supporting_fragment_count,
+                    call.forward_support_count,
+                    call.reverse_support_count,
+                    call.spanning_fragment_count,
+                    f"{call.observed_supporting_fragment_fraction:.6f}",
+                    (
+                        f"{call.supporting_fragment_count}/"
+                        f"{call.spanning_fragment_count} spanning fragments"
+                    ),
+                    min_supporting_fragment_count,
+                    min_spanning_fragment_count,
+                    f"{min_supporting_fragment_fraction:.6f}",
+                    f"{max_single_direction_fraction:.6f}",
+                    min_directional_observations,
+                    (
+                        f"{alignment_filters.min_identity:.6f}"
+                        if alignment_filters is not None
+                        else "."
+                    ),
+                    (
+                        f"{alignment_filters.min_on_target_fraction:.6f}"
+                        if alignment_filters is not None
+                        else "."
+                    ),
+                    (
+                        alignment_filters.min_score
+                        if alignment_filters is not None
+                        and alignment_filters.min_score is not None
+                        else "."
+                    ),
+                    (
+                        "Yes"
+                        if alignment_filters is not None
+                        and alignment_filters.reject_ambiguous
+                        else "No"
+                    ),
+                    (
+                        insertion_filters.min_junction_quality
+                        if insertion_filters is not None
+                        else "."
+                    ),
+                    (
+                        insertion_filters.junction_flank_size
+                        if insertion_filters is not None
+                        else "."
+                    ),
+                    (
+                        insertion_filters.min_adapter_match_length
+                        if insertion_filters is not None
+                        else "."
+                    ),
+                    *_sample_tsv_values(sample_result, qc_thresholds),
+                    call.concordant_fragment_count,
+                    call.single_mate_fragment_count,
+                    call.discordant_fragment_count,
+                    call.unresolved_fragment_count,
+                    reference_id or ".",
+                    reference_length if reference_length is not None else ".",
+                    reference_sha256 or ".",
+                    COORDINATE_CONVENTION,
+                    call.itd.orientation,
+                    min_insert_length,
+                    min_tandem_length,
+                    "Yes" if require_in_frame else "No",
                 ]
             )
+        if not calls:
+            empty_call_values: list[object] = ["."] * 31
+            empty_call_values[3] = mode
+            empty_call_values[4] = max_mismatches
+            empty_call_values[19] = min_supporting_fragment_count
+            empty_call_values[20] = min_spanning_fragment_count
+            empty_call_values[21] = f"{min_supporting_fragment_fraction:.6f}"
+            empty_call_values[22] = f"{max_single_direction_fraction:.6f}"
+            empty_call_values[23] = min_directional_observations
+            if alignment_filters is not None:
+                empty_call_values[24] = f"{alignment_filters.min_identity:.6f}"
+                empty_call_values[25] = (
+                    f"{alignment_filters.min_on_target_fraction:.6f}"
+                )
+                empty_call_values[26] = (
+                    alignment_filters.min_score
+                    if alignment_filters.min_score is not None
+                    else "."
+                )
+                empty_call_values[27] = (
+                    "Yes" if alignment_filters.reject_ambiguous else "No"
+                )
+            if insertion_filters is not None:
+                empty_call_values[28] = insertion_filters.min_junction_quality
+                empty_call_values[29] = insertion_filters.junction_flank_size
+                empty_call_values[30] = insertion_filters.min_adapter_match_length
+            writer.writerow(
+                empty_call_values
+                + _sample_tsv_values(sample_result, qc_thresholds)
+                + [".", ".", ".", "."]
+                + [
+                    reference_id or ".",
+                    reference_length if reference_length is not None else ".",
+                    reference_sha256 or ".",
+                    COORDINATE_CONVENTION,
+                    ".",
+                ]
+                + [
+                    min_insert_length,
+                    min_tandem_length,
+                    "Yes" if require_in_frame else "No",
+                ]
+            )
+
+
+def _sample_tsv_values(
+    result: SampleResult | None,
+    thresholds: SampleQCThresholds | None,
+) -> list[object]:
+    if result is None:
+        result_values: list[object] = ["."] * 28
+    else:
+        preprocessing = result.preprocessing
+        alignment = result.alignment
+        coverage = result.coverage
+        result_values = [
+            result.sample_id,
+            result.analysis_status,
+            result.qc_status,
+            result.outcome,
+            ";".join(result.qc_reasons) or ".",
+            result.error_message or ".",
+            preprocessing.input_fragment_count if preprocessing else ".",
+            preprocessing.input_read_count if preprocessing else ".",
+            (
+                preprocessing.primer_retained_forward_reads
+                if preprocessing
+                and preprocessing.primer_retained_forward_reads is not None
+                else "."
+            ),
+            (
+                preprocessing.primer_retained_reverse_reads
+                if preprocessing
+                and preprocessing.primer_retained_reverse_reads is not None
+                else "."
+            ),
+            preprocessing.primer_failed_read_count if preprocessing else ".",
+            preprocessing.length_failed_read_count if preprocessing else ".",
+            preprocessing.quality_failed_read_count if preprocessing else ".",
+            preprocessing.passing_read_count if preprocessing else ".",
+            preprocessing.passing_forward_read_count if preprocessing else ".",
+            preprocessing.passing_reverse_read_count if preprocessing else ".",
+            preprocessing.usable_fragment_count if preprocessing else ".",
+            alignment.attempted_read_count if alignment else ".",
+            alignment.passing_read_count if alignment else ".",
+            alignment.passing_forward_read_count if alignment else ".",
+            alignment.passing_reverse_read_count if alignment else ".",
+            alignment.passing_fragment_count if alignment else ".",
+            f"{alignment.pass_fraction:.6f}" if alignment else ".",
+            coverage.minimum if coverage else ".",
+            f"{coverage.median:.1f}" if coverage else ".",
+            coverage.maximum if coverage else ".",
+            result.passing_call_count,
+            result.filtered_candidate_count,
+        ]
+    threshold_values: list[object] = (
+        ["."] * 5
+        if thresholds is None
+        else [
+            thresholds.min_usable_fragment_count,
+            thresholds.min_passing_reads_per_direction,
+            f"{thresholds.min_alignment_pass_fraction:.6f}",
+            thresholds.min_median_interbase_coverage,
+            f"{thresholds.min_primer_retention_fraction:.6f}",
+        ]
+    )
+    return result_values + threshold_values
+
+
+def _render_html_empty_state(result: SampleResult | None) -> str:
+    if result is not None and result.analysis_status == "error":
+        message = "ITD calling did not complete; no biological outcome is available."
+    elif result is not None and result.outcome == "indeterminate":
+        message = (
+            "No ITD candidates were called, but the result is indeterminate "
+            "because sample QC did not pass."
+        )
+    else:
+        message = "No ITD candidates were called."
+    return f'<section class="empty-state">{html.escape(message)}</section>'
+
+
+def _render_html_sample_summary(
+    result: SampleResult | None,
+    thresholds: SampleQCThresholds | None,
+) -> str:
+    if result is None:
+        return ""
+    values: list[tuple[str, str]] = [
+        ("Sample", result.sample_id),
+        ("Analysis Status", result.analysis_status),
+        ("QC Status", result.qc_status),
+        ("Outcome", result.outcome),
+        ("QC Reasons", "; ".join(result.qc_reasons) or "None"),
+        ("Passing Calls", str(result.passing_call_count)),
+        ("Filtered Candidates", str(result.filtered_candidate_count)),
+    ]
+    if result.error_message:
+        values.append(("Analysis Error", result.error_message))
+    if result.preprocessing is not None:
+        metrics = result.preprocessing
+        values.extend(
+            [
+                ("Input Fragments", str(metrics.input_fragment_count)),
+                ("Input Reads", str(metrics.input_read_count)),
+                ("Usable Fragments", str(metrics.usable_fragment_count)),
+                (
+                    "Preprocessing-passing Reads (R1/R2)",
+                    f"{metrics.passing_read_count} "
+                    f"({metrics.passing_forward_read_count}/"
+                    f"{metrics.passing_reverse_read_count})",
+                ),
+                ("Primer-failed Reads", str(metrics.primer_failed_read_count)),
+                ("Length-failed Reads", str(metrics.length_failed_read_count)),
+                ("Quality-failed Reads", str(metrics.quality_failed_read_count)),
+            ]
+        )
+        if metrics.primer_retained_forward_reads is not None:
+            values.append(
+                (
+                    "Forward Primer-retained Reads",
+                    str(metrics.primer_retained_forward_reads),
+                )
+            )
+        if metrics.primer_retained_reverse_reads is not None:
+            values.append(
+                (
+                    "Reverse Primer-retained Reads",
+                    str(metrics.primer_retained_reverse_reads),
+                )
+            )
+    if result.alignment is not None:
+        metrics = result.alignment
+        values.extend(
+            [
+                ("Alignment-passing Reads", str(metrics.passing_read_count)),
+                ("Alignment Pass Fraction", f"{metrics.pass_fraction:.1%}"),
+                (
+                    "Alignment-passing Reads (R1/R2)",
+                    f"{metrics.passing_forward_read_count}/"
+                    f"{metrics.passing_reverse_read_count}",
+                ),
+            ]
+        )
+    if result.coverage is not None:
+        values.append(
+            (
+                "Inter-base Coverage (min/median/max)",
+                f"{result.coverage.minimum}/"
+                f"{result.coverage.median:.1f}/"
+                f"{result.coverage.maximum}",
+            )
+        )
+    if thresholds is not None:
+        values.extend(
+            [
+                ("QC Min Usable Fragments", str(thresholds.min_usable_fragment_count)),
+                (
+                    "QC Min Reads per Direction",
+                    str(thresholds.min_passing_reads_per_direction),
+                ),
+                (
+                    "QC Min Alignment Pass Fraction",
+                    f"{thresholds.min_alignment_pass_fraction:.1%}",
+                ),
+                (
+                    "QC Min Median Coverage",
+                    str(thresholds.min_median_interbase_coverage),
+                ),
+                (
+                    "QC Min Primer Retention",
+                    f"{thresholds.min_primer_retention_fraction:.1%}",
+                ),
+            ]
+        )
+    value_html = "".join(
+        f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>"
+        for label, value in values
+    )
+    return (
+        '<section class="sample-result">'
+        '<h2>Sample Result and QC</h2>'
+        f'<dl class="summary">{value_html}</dl>'
+        "</section>"
+    )
 
 
 def _render_html_thresholds_section(
     *,
     filters: ITDFilter | None,
     max_mismatches: int,
+    alignment_filters: AlignmentEvidenceFilter | None = None,
+    insertion_filters: InsertionEvidenceFilter | None = None,
+    min_insert_length: int = 6,
+    min_tandem_length: int = 6,
+    require_in_frame: bool = True,
 ) -> str:
     items: list[tuple[str, str]] = []
     if filters is not None:
         items.extend(
             [
-                ("Min support count", str(filters.min_support_count)),
-                ("Min coverage", str(filters.min_coverage)),
-                ("Min VAF", f"{filters.min_vaf:.6f}"),
+                (
+                    "Min supporting fragments",
+                    str(filters.min_supporting_fragment_count),
+                ),
+                (
+                    "Min spanning fragments",
+                    str(filters.min_spanning_fragment_count),
+                ),
+                (
+                    "Min supporting-fragment fraction",
+                    f"{filters.min_observed_supporting_fragment_fraction:.3%}",
+                ),
+                (
+                    "Max single-direction fraction",
+                    f"{filters.max_single_direction_fraction:.3f}",
+                ),
+                (
+                    "Min directional observations",
+                    str(filters.min_directional_observations),
+                ),
             ]
         )
-    items.append(("Max mismatches", str(max_mismatches)))
+    items.extend(
+        [
+            ("Max mismatches", str(max_mismatches)),
+            ("Min insert length", str(min_insert_length)),
+            ("Min tandem length", str(min_tandem_length)),
+            ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
+        ]
+    )
+    if alignment_filters is not None:
+        items.extend(
+            [
+                ("Min alignment identity", f"{alignment_filters.min_identity:.3f}"),
+                (
+                    "Min on-target fraction",
+                    f"{alignment_filters.min_on_target_fraction:.3f}",
+                ),
+                (
+                    "Min alignment score",
+                    str(alignment_filters.min_score)
+                    if alignment_filters.min_score is not None
+                    else "Not set",
+                ),
+                (
+                    "Reject ambiguous alignments",
+                    "Yes" if alignment_filters.reject_ambiguous else "No",
+                ),
+            ]
+        )
+    if insertion_filters is not None:
+        items.extend(
+            [
+                (
+                    "Min junction quality",
+                    str(insertion_filters.min_junction_quality),
+                ),
+                ("Junction flank size", str(insertion_filters.junction_flank_size)),
+                (
+                    "Adapter sequences checked",
+                    str(len(insertion_filters.adapter_sequences)),
+                ),
+                (
+                    "Min adapter match length",
+                    str(insertion_filters.min_adapter_match_length),
+                ),
+            ]
+        )
 
     item_html = "".join(
         (
@@ -651,19 +1493,75 @@ def _render_html_thresholds_section(
     )
 
 
+def _render_html_reference_summary(
+    reference_id: str | None,
+    reference_length: int | None,
+    reference_sha256: str | None,
+) -> str:
+    values = (
+        ("Reference FASTA Header", reference_id or "Not provided"),
+        (
+            "Reference Length",
+            str(reference_length) if reference_length is not None else "Not provided",
+        ),
+        ("Reference Sequence SHA-256", reference_sha256 or "Not provided"),
+        ("Coordinate Convention", COORDINATE_CONVENTION),
+    )
+    value_html = "".join(
+        f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>"
+        for label, value in values
+    )
+    return (
+        '<section class="sample-result">'
+        '<h2>Reference and Coordinates</h2>'
+        f'<dl class="summary">{value_html}</dl>'
+        "</section>"
+    )
+
+
 def _render_html_call_section(
     call: ITDCall,
     representatives: list[UniqueSupportRepresentative],
 ) -> str:
     summary = (
-        ('Insertion Start', str(call.itd.insertion.start)),
-        ('Tandem Start', str(call.itd.tandem_start)),
+        (
+            'Insertion After Reference Base (0-based)',
+            str(call.itd.insertion.start),
+        ),
+        ('Tandem Start (0-based)', str(call.itd.tandem_start)),
+        ('Tandem End (0-based, inclusive)', str(call.itd.tandem_end)),
+        ('Tandem Orientation', call.itd.orientation),
         ('Sequence', call.itd.tandem_sequence),
         ('Spacer Prefix', call.itd.spacer_prefix or "-"),
         ('Spacer Suffix', call.itd.spacer_suffix or "-"),
-        ('Support Count', str(call.support_count)),
-        ('Coverage', str(call.coverage)),
-        ('VAF', f"{call.vaf:.6f}"),
+        (
+            'Read-Edge Observation',
+            'Yes — partial; full ITD not reconstructed'
+            if call.itd.is_partial_observation
+            else 'No',
+        ),
+        ('Supporting Fragments', str(call.supporting_fragment_count)),
+        ('Forward Support Count', str(call.forward_support_count)),
+        ('Reverse Support Count', str(call.reverse_support_count)),
+        ('Concordant Fragments', str(call.concordant_fragment_count)),
+        ('Single-mate Fragments', str(call.single_mate_fragment_count)),
+        (
+            'Discordant Fragments (excluded)',
+            str(call.discordant_fragment_count),
+        ),
+        (
+            'Unresolved Fragments (excluded)',
+            str(call.unresolved_fragment_count),
+        ),
+        ('Spanning Fragments', str(call.spanning_fragment_count)),
+        (
+            'Observed Supporting-fragment Fraction',
+            (
+                f"{call.observed_supporting_fragment_fraction:.1%} "
+                f"({call.supporting_fragment_count}/"
+                f"{call.spanning_fragment_count} spanning fragments)"
+            ),
+        ),
         ('Status', call.status),
         ('Filter Reasons', _format_filter_reasons(call)),
     )

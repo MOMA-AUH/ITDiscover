@@ -65,7 +65,13 @@ class Fragment:
 
 @dataclass(frozen=True)
 class ReadTrimSettings:
-    """Optional primer sequences to trim from oriented reads."""
+    """Optional primer sequences in their raw sequencing-read orientation.
+
+    ``forward_primer`` is removed from the 5' end of R1.  ``reverse_primer``
+    is supplied as it appears at the 5' end of raw R2; after R2 has been
+    reverse-complemented into reference orientation, its reverse complement is
+    removed from the 3' end.
+    """
 
     forward_primer: str | None = None
     reverse_primer: str | None = None
@@ -80,6 +86,31 @@ class ReadTrimSettings:
             if not sequence:
                 raise ValueError(f"{field_name} must not be empty")
             validate_sequence(sequence, field_name=field_name)
+
+
+@dataclass(frozen=True)
+class PreprocessingMetrics:
+    """Auditable read and fragment counts retained through preprocessing."""
+
+    input_fragment_count: int
+    input_read_count: int
+    primer_retained_forward_reads: int | None
+    primer_retained_reverse_reads: int | None
+    primer_failed_read_count: int
+    length_failed_read_count: int
+    quality_failed_read_count: int
+    passing_read_count: int
+    passing_forward_read_count: int
+    passing_reverse_read_count: int
+    usable_fragment_count: int
+
+
+@dataclass(frozen=True)
+class PreprocessingResult:
+    """Passing oriented reads together with preprocessing metrics."""
+
+    reads: tuple[SequencingRead, ...]
+    metrics: PreprocessingMetrics
 
 
 def orient_read(
@@ -123,7 +154,7 @@ def trim_primers(
     read: SequencingRead,
     trimming: ReadTrimSettings | None,
 ) -> SequencingRead | None:
-    """Trim configured primer sequences from an oriented read."""
+    """Trim configured raw-read primer sequences from an oriented read."""
     trimmed, _ = _trim_terminal_ns_with_stats(read)
     if trimming is None:
         return trimmed
@@ -131,7 +162,12 @@ def trim_primers(
     if trimmed.direction == "forward":
         trimmed = _trim_prefix_step(trimmed, trimming.forward_primer)
     else:
-        trimmed = _trim_suffix_step(trimmed, trimming.reverse_primer)
+        reverse_primer = (
+            reverse_complement(trimming.reverse_primer)
+            if trimming.reverse_primer is not None
+            else None
+        )
+        trimmed = _trim_suffix_step(trimmed, reverse_primer)
     if trimmed is None:
         return None
     return _trim_terminal_ns_with_stats(trimmed)[0]
@@ -185,6 +221,78 @@ def preprocess_fragments(
         min_mean_quality=min_mean_quality,
         trimming=trimming,
     )
+
+
+def preprocess_fragments_with_metrics(
+    fragments: Iterable[Fragment],
+    *,
+    min_length: int = 100,
+    min_mean_quality: float = 30,
+    trimming: ReadTrimSettings | None = None,
+) -> PreprocessingResult:
+    """Preprocess paired fragments while retaining rejection and direction counts."""
+    if min_length < 0:
+        raise ValueError("min_length must not be negative")
+    if min_mean_quality < 0:
+        raise ValueError("min_mean_quality must not be negative")
+
+    fragments = list(fragments)
+    passing_reads: list[SequencingRead] = []
+    primer_failed = 0
+    length_failed = 0
+    quality_failed = 0
+    primer_retained = {"forward": 0, "reverse": 0}
+
+    for fragment in fragments:
+        for read in fragment.reads:
+            trimmed = trim_primers(read, trimming)
+            primer_is_configured = trimming is not None and (
+                trimming.forward_primer is not None
+                if read.direction == "forward"
+                else trimming.reverse_primer is not None
+            )
+            if trimmed is None:
+                primer_failed += 1
+                continue
+            if primer_is_configured:
+                primer_retained[read.direction] += 1
+            if trimmed.length < min_length:
+                length_failed += 1
+                continue
+            if trimmed.mean_quality < min_mean_quality:
+                quality_failed += 1
+                continue
+            passing_reads.append(trimmed)
+
+    passing_fragment_ids = {read.fragment_id for read in passing_reads}
+    forward_primer_configured = (
+        trimming is not None and trimming.forward_primer is not None
+    )
+    reverse_primer_configured = (
+        trimming is not None and trimming.reverse_primer is not None
+    )
+    metrics = PreprocessingMetrics(
+        input_fragment_count=len(fragments),
+        input_read_count=2 * len(fragments),
+        primer_retained_forward_reads=(
+            primer_retained["forward"] if forward_primer_configured else None
+        ),
+        primer_retained_reverse_reads=(
+            primer_retained["reverse"] if reverse_primer_configured else None
+        ),
+        primer_failed_read_count=primer_failed,
+        length_failed_read_count=length_failed,
+        quality_failed_read_count=quality_failed,
+        passing_read_count=len(passing_reads),
+        passing_forward_read_count=sum(
+            read.direction == "forward" for read in passing_reads
+        ),
+        passing_reverse_read_count=sum(
+            read.direction == "reverse" for read in passing_reads
+        ),
+        usable_fragment_count=len(passing_fragment_ids),
+    )
+    return PreprocessingResult(reads=tuple(passing_reads), metrics=metrics)
 
 
 def _trim_terminal_ns_with_stats(
