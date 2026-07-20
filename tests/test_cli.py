@@ -306,7 +306,7 @@ def test_call_command_trims_configured_primers(tmp_path, capsys) -> None:
                 "--forward-primer",
                 "TTT",
                 "--reverse-primer",
-                "CGT",
+                "TTTACG",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",

@@ -65,7 +65,13 @@ class Fragment:
 
 @dataclass(frozen=True)
 class ReadTrimSettings:
-    """Optional primer sequences to trim from oriented reads."""
+    """Optional primer sequences in their raw sequencing-read orientation.
+
+    ``forward_primer`` is removed from the 5' end of R1.  ``reverse_primer``
+    is supplied as it appears at the 5' end of raw R2; after R2 has been
+    reverse-complemented into reference orientation, its reverse complement is
+    removed from the 3' end.
+    """
 
     forward_primer: str | None = None
     reverse_primer: str | None = None
@@ -123,7 +129,7 @@ def trim_primers(
     read: SequencingRead,
     trimming: ReadTrimSettings | None,
 ) -> SequencingRead | None:
-    """Trim configured primer sequences from an oriented read."""
+    """Trim configured raw-read primer sequences from an oriented read."""
     trimmed, _ = _trim_terminal_ns_with_stats(read)
     if trimming is None:
         return trimmed
@@ -131,7 +137,12 @@ def trim_primers(
     if trimmed.direction == "forward":
         trimmed = _trim_prefix_step(trimmed, trimming.forward_primer)
     else:
-        trimmed = _trim_suffix_step(trimmed, trimming.reverse_primer)
+        reverse_primer = (
+            reverse_complement(trimming.reverse_primer)
+            if trimming.reverse_primer is not None
+            else None
+        )
+        trimmed = _trim_suffix_step(trimmed, reverse_primer)
     if trimmed is None:
         return None
     return _trim_terminal_ns_with_stats(trimmed)[0]

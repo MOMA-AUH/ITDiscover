@@ -33,7 +33,11 @@ itdiscover \
 
 The `--output` flag writes an HTML report with one representative alignment per called duplication.
 The `--output-tsv` flag writes a tab-separated summary of the called ITDs.
-Primer trimming is optional and can be enabled with `--forward-primer` and `--reverse-primer`.
+Primer trimming is optional and can be enabled with `--forward-primer` and
+`--reverse-primer`. Supply each primer in the orientation in which it occurs at
+the 5′ end of its raw FASTQ read: the reverse-primer sequence is therefore
+reverse-complemented internally before it is trimmed from the 3′ end of the
+reference-oriented R2 read.
 
 For an insertion to be called an ITD, its copied reference tract must be immediately
 adjacent to the insertion breakpoint. Extra inserted bases may flank the copied tract

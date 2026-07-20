@@ -71,7 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reverse-primer",
-        help="Optional reverse primer sequence to trim from the 3' end of oriented R2 reads.",
+        help=(
+            "Optional reverse primer sequence as it occurs at the 5' end of raw R2; "
+            "its reverse complement is trimmed from oriented R2 reads."
+        ),
     )
     parser.add_argument(
         "--min-read-length",

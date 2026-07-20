@@ -150,23 +150,23 @@ def test_trim_primers_trims_forward_reads() -> None:
     )
 
 
-def test_trim_primers_trims_reverse_reads() -> None:
-    read = SequencingRead(
+def test_trim_primers_trims_raw_r2_reverse_primer_after_orientation() -> None:
+    raw_r2 = "AAACCCAAACCCGGGTTT"
+    read = orient_read(
         read_id="read-2",
-        sequence="GGGCGTAAA",
-        qualities=tuple(range(9)),
+        fragment_id="read-2",
+        sequence=raw_r2,
+        qualities=tuple(range(len(raw_r2))),
         direction="reverse",
     )
 
     assert trim_primers(
         read,
-        ReadTrimSettings(
-            reverse_primer="CGT",
-        ),
+        ReadTrimSettings(reverse_primer="AAACCC"),
     ) == SequencingRead(
         read_id="read-2",
-        sequence="GGG",
-        qualities=(0, 1, 2),
+        sequence="AAACCCGGGTTT",
+        qualities=tuple(range(17, 5, -1)),
         direction="reverse",
     )
 
