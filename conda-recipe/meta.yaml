@@ -30,7 +30,7 @@ test:
     - itdiscover --help
 
 about:
-  home: https://github.com/micknudsen/ITDiscover
+  home: https://github.com/MOMA-AUH/ITDiscover
   summary: Tool for discovering FLT3 ITDs from amplicon sequencing of AML samples
   license: MIT
   license_file: LICENSE
