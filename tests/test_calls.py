@@ -212,6 +212,20 @@ def test_call_exact_itds_ignores_non_itd_insertions() -> None:
     assert call_exact_itds(alignments, reference) == []
 
 
+def test_call_exact_itds_ignores_reference_match_away_from_breakpoint() -> None:
+    reference = "AAACCCGGGTTTAAATTTGGG"
+    alignments = [
+        make_alignment(
+            "remote-copy-read",
+            "AAACCCGGGTTTAAACCCGGGTTTGGG",
+            "AAACCCGGGTTTAAACCCGGGTTTGGG",
+            "AAACCCGGGTTTAAA------TTTGGG",
+        )
+    ]
+
+    assert call_exact_itds(alignments, reference) == []
+
+
 def test_call_exact_itds_returns_sorted_calls() -> None:
     reference = "AAACCCGGGTTTAAACCC"
     alignments = [

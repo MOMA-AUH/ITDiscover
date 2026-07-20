@@ -94,7 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-mismatches",
         type=_non_negative_int,
-        help="Allow fuzzy ITD calls with at most this many mismatches.",
+        help=(
+            "Maximum mismatches allowed in the copied tandem tract; "
+            "0 is equivalent to exact mode."
+        ),
     )
     parser.add_argument(
         "--min-support-count",

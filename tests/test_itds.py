@@ -65,7 +65,7 @@ def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
     )
 
 
-def test_slides_repetitive_exact_itds_to_most_five_prime_source_interval() -> None:
+def test_uses_adjacent_downstream_source_for_leading_repetitive_itd() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=0,
@@ -75,7 +75,7 @@ def test_slides_repetitive_exact_itds_to_most_five_prime_source_interval() -> No
 
     assert classify_exact_itd(insertion, "AAAAAAAAAAAA") == ITD(
         insertion=insertion,
-        tandem_start=0,
+        tandem_start=1,
         tandem_sequence="AAAAAA",
         orientation="downstream",
     )
@@ -96,6 +96,33 @@ def test_classifies_exact_tandem_with_spacers_on_both_sides() -> None:
         orientation="downstream",
         spacer_prefix="NNN",
         spacer_suffix="NN",
+    )
+
+
+def test_does_not_classify_exact_reference_match_away_from_breakpoint() -> None:
+    insertion = Insertion(
+        read_id="read-1",
+        start=14,
+        sequence="CCCGGG",
+        direction="forward",
+    )
+
+    assert classify_exact_itd(insertion, "AAACCCGGGTTTAAATTTGGG") is None
+
+
+def test_exact_classification_matches_zero_mismatch_fuzzy_classification() -> None:
+    insertion = Insertion(
+        read_id="read-1",
+        start=2,
+        sequence="TTACCCGGGACT",
+        direction="forward",
+    )
+    reference = "AAACCCGGGTTT"
+
+    assert classify_exact_itd(insertion, reference) == classify_fuzzy_itd(
+        insertion,
+        reference,
+        max_mismatches=0,
     )
 
 

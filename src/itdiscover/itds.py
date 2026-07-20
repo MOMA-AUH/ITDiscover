@@ -74,12 +74,13 @@ class _TandemMatch:
 
 
 def classify_exact_itd(insertion: Insertion, reference: str) -> ITD | None:
-    """Classify an insertion as an exact tandem duplication with spacers."""
-    _validate_reference(reference)
-    match = _best_exact_copied_match(insertion.sequence, reference)
-    if match is None or len(match.tandem_sequence) < _MIN_COPIED_LENGTH:
-        return None
-    return _itd_from_match(insertion, match)
+    """Classify an insertion as an adjacent exact tandem duplication.
+
+    The copied reference tract must be immediately upstream or downstream of
+    the insertion site. Extra inserted bases may flank that copied tract and
+    are represented as spacer sequence.
+    """
+    return classify_fuzzy_itd(insertion, reference, max_mismatches=0)
 
 
 def score_tandem_similarity(
@@ -123,59 +124,6 @@ def classify_fuzzy_itd(
 
 def _validate_reference(reference: str) -> None:
     validate_sequence(reference, field_name="reference")
-
-
-def _best_exact_copied_match(
-    sequence: str,
-    reference: str,
-) -> _TandemMatch | None:
-    return _best_copied_match(
-        sequence,
-        reference,
-        max_mismatches=0,
-        min_copied_length=1,
-    )
-
-
-def _best_copied_match(
-    sequence: str,
-    reference: str,
-    *,
-    max_mismatches: int,
-    min_copied_length: int,
-) -> _TandemMatch | None:
-    if not sequence:
-        return None
-
-    best_match: _TandemMatch | None = None
-    best_key: tuple[int, int, int, int] | None = None
-
-    for insertion_start in range(len(sequence)):
-        for insertion_end in range(insertion_start + 1, len(sequence) + 1):
-            copied_length = insertion_end - insertion_start
-            if copied_length < min_copied_length or copied_length > len(reference):
-                continue
-            observed = sequence[insertion_start:insertion_end]
-            for tandem_start in range(len(reference) - copied_length + 1):
-                tandem_reference = reference[
-                    tandem_start : tandem_start + copied_length
-                ]
-                mismatches = _mismatch_count(observed, tandem_reference)
-                if mismatches > max_mismatches:
-                    continue
-                matches = copied_length - mismatches
-                key = (-matches, mismatches, tandem_start, insertion_start)
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_match = _TandemMatch(
-                        insertion_start=insertion_start,
-                        insertion_end=insertion_end,
-                        tandem_start=tandem_start,
-                        tandem_sequence=tandem_reference,
-                        mismatches=mismatches,
-                    )
-
-    return best_match
 
 
 def _best_adjacent_copied_match(
