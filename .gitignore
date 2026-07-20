@@ -219,3 +219,6 @@ __marimo__/
 
 # Convenient folder for debugging purposes
 debug/
+
+# VScode
+.vscode/
