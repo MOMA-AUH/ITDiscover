@@ -80,7 +80,7 @@ def test_call_exact_itds_reports_support_coverage_and_vaf() -> None:
     ]
 
 
-def test_call_exact_itds_merges_upstream_and_downstream_representations() -> None:
+def test_call_exact_itds_keeps_distinct_breakpoints_separate() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -111,10 +111,38 @@ def test_call_exact_itds_merges_upstream_and_downstream_representations() -> Non
 
     calls = call_exact_itds(alignments, reference)
 
-    assert len(calls) == 1
-    assert calls[0].support_count == 5
-    assert calls[0].coverage == 12
-    assert calls[0].vaf == 5 / 12
+    assert len(calls) == 2
+    assert [call.itd.insertion.start for call in calls] == [2, 8]
+    assert [call.support_count for call in calls] == [3, 2]
+    assert [call.coverage for call in calls] == [12, 12]
+    assert [call.vaf for call in calls] == [3 / 12, 2 / 12]
+
+
+def test_call_exact_itds_are_independent_of_input_order_for_distinct_breakpoints() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "upstream-breakpoint",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+        ),
+        make_alignment(
+            "downstream-breakpoint",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAA------CCCGGGTTT",
+        ),
+    ]
+
+    calls = call_exact_itds(alignments, reference)
+    reversed_calls = call_exact_itds(list(reversed(alignments)), reference)
+
+    assert calls == reversed_calls
+    assert [(call.itd.insertion.start, call.support_count, call.vaf) for call in calls] == [
+        (2, 1, 0.5),
+        (8, 1, 0.5),
+    ]
 
 
 def test_call_exact_itds_counts_overlapping_mates_once_per_fragment() -> None:

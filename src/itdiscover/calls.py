@@ -67,7 +67,9 @@ class InsertSequenceSupport:
     mismatches: int
 
 
-ITDCallKey = tuple[int, str, str, str, bool]
+# The breakpoint is part of the event identity.  Calls with the same copied
+# tract but different insertion sites need separate support, coverage, and VAF.
+ITDCallKey = tuple[int, int, str, str, str, bool]
 SupportRepresentativeMap = dict[ITDCallKey, dict[str, UniqueSupportRepresentative]]
 
 
@@ -211,6 +213,7 @@ def call_exact_itds_with_representatives(
 
 def _itd_call_key(itd: ITD) -> ITDCallKey:
     return (
+        itd.insertion.start,
         itd.tandem_start,
         itd.tandem_sequence,
         itd.spacer_prefix,
