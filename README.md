@@ -47,7 +47,7 @@ The expected primary result is:
 | Report field | Expected value |
 |---|---|
 | Analysis status | `complete` |
-| QC status | `warn` |
+| QC status | `pass` |
 | Outcome | `ITD detected` |
 | Inserted sequence | `AGAGAATATGAATAT` |
 | Insertion coordinate | after reference base 78 |
@@ -58,10 +58,11 @@ The expected primary result is:
 | Observed mutant-fragment fraction | 25.0% (`3/12`) |
 
 In plain language: an ITD is detected, and 3 of the 12 fragments that can
-confidently distinguish this allele from wild type support the ITD. The sample
-has `warn` rather than `pass` QC because a second candidate is reported but
-fails the minimum of three mutant fragments. The 25.0% value is an observed
-post-filter fragment fraction, not a clinically validated VAF or allelic ratio.
+confidently distinguish this allele from wild type support the ITD. A second
+candidate that fails the minimum of three mutant fragments remains visible for
+auditability without downgrading the passing call. The 25.0% value is an
+observed post-filter fragment fraction, not a clinically validated VAF or
+allelic ratio.
 The reads are synthetic and the default thresholds are research defaults, so
 this example demonstrates interpretation of ITDiscover output rather than a
 validated clinical result.
@@ -136,8 +137,11 @@ pass fraction of at least 80%, median inter-base fragment coverage of at least
 10, and at least 80% primer retention in each direction for which a primer was
 configured. These research defaults are configurable with the `--min-*` QC
 options and require assay-specific validation.
-An otherwise adequate sample is marked `warn` when filtered ITD candidates are
-present, while the outcome continues to state that no *passing* ITD was detected.
+An otherwise adequate sample with no passing call is marked `warn` when filtered
+ITD candidates are present, while the outcome continues to state that no
+*passing* ITD was detected. Minor filtered alternatives do not downgrade an
+otherwise adequate sample that has a passing ITD call; their count and details
+remain available in the reports.
 
 HTML and TSV reports retain input fragment/read counts, primer failures and
 retention by direction, length and quality failures, preprocessing-passing

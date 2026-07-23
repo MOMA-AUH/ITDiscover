@@ -54,6 +54,46 @@ def test_call_command_requires_both_primers(missing_primer, capsys) -> None:
     assert missing_primer in capsys.readouterr().err
 
 
+def test_reversed_primer_exits_cleanly_with_correction(tmp_path, capsys) -> None:
+    reference_path = tmp_path / "reference.fa"
+    reference_path.write_text(">reference\nAAACCCGGGTTT\n", encoding="utf-8")
+    r1_path = tmp_path / "sample_R1.fastq"
+    r1_path.write_text(
+        "@fragment/1\nGGGAAACCC\n+\nIIIIIIIII\n",
+        encoding="utf-8",
+    )
+    r2_path = tmp_path / "sample_R2.fastq"
+    r2_path.write_text(
+        "@fragment/2\nTTTAAACCCTTT\n+\nIIIIIIIIIIII\n",
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+
+    assert cli.main(
+        [
+            "--reference",
+            str(reference_path),
+            "--r1",
+            str(r1_path),
+            "--r2",
+            str(r2_path),
+            "--forward-primer",
+            "GGG",
+            "--reverse-primer",
+            "CCCAAA",
+            "--output-tsv",
+            str(report_path),
+        ]
+    ) == 2
+
+    error = capsys.readouterr().err
+    assert "Traceback" not in error
+    assert "--reverse-primer matches no raw R2 reads" in error
+    assert "'AAACCC' matches 1" in error
+    rows = list(csv.DictReader(report_path.read_text(encoding="utf-8").splitlines(), delimiter="\t"))
+    assert rows[0]["Analysis Error"].startswith("--reverse-primer matches no raw R2 reads")
+
+
 def test_event_length_thresholds_must_be_positive(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(
@@ -142,7 +182,7 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert passing["Sample ID"] == "synthetic-flt3"
     assert passing["Reference Length"] == "329"
     assert passing["Outcome"] == "ITD detected"
-    assert passing["QC Status"] == "warn"
+    assert passing["QC Status"] == "pass"
     assert passing["Insertion Sequence"] == "AGAGAATATGAATAT"
     insertion_coordinate = (
         "Insertion After Reference Base (0-based; -1=before first)"

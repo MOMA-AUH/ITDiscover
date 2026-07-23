@@ -11,6 +11,7 @@ from itdiscover.reads import (
     preprocess_reads,
     trim_primers,
     trim_terminal_ns,
+    validate_primer_orientations,
 )
 from itdiscover.sequences import reverse_complement
 
@@ -184,6 +185,42 @@ def test_trim_primers_discards_reads_without_primer() -> None:
         read,
         ReadTrimSettings(forward_primer="CCC"),
     ) is None
+
+
+def test_reversed_raw_r2_primer_is_reported_explicitly() -> None:
+    raw_r2_primer = "AAACCC"
+    fragment = Fragment(
+        fragment_id="fragment",
+        forward_read=orient_read(
+            read_id="fragment/1",
+            fragment_id="fragment",
+            sequence="GGGAAATTT",
+            qualities=(40,) * 9,
+            direction="forward",
+        ),
+        reverse_read=orient_read(
+            read_id="fragment/2",
+            fragment_id="fragment",
+            sequence=f"GG{raw_r2_primer}TTT",
+            qualities=(40,) * 11,
+            direction="reverse",
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"--reverse-primer matches no raw R2 reads, but its reversed "
+            r"sequence 'AAACCC' matches 1"
+        ),
+    ):
+        validate_primer_orientations(
+            [fragment],
+            ReadTrimSettings(
+                forward_primer="GGG",
+                reverse_primer=raw_r2_primer[::-1],
+            ),
+        )
 
 
 def test_passes_read_filters_uses_trimmed_length_and_mean_quality() -> None:

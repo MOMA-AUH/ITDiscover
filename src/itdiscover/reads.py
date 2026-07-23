@@ -7,6 +7,10 @@ from .insertions import Direction
 from .sequences import reverse_complement, validate_sequence
 
 
+class PrimerOrientationError(ValueError):
+    """A configured primer clearly uses the wrong raw-read orientation."""
+
+
 @dataclass(frozen=True)
 class SequencingRead:
     """A sequencing read oriented to the forward WT reference."""
@@ -65,7 +69,7 @@ class Fragment:
 
 @dataclass(frozen=True)
 class ReadTrimSettings:
-    """Optional primer sequences in their raw sequencing-read orientation.
+    """Primer sequences in their raw sequencing-read orientation.
 
     ``forward_primer`` is removed from the 5' end of R1.  ``reverse_primer``
     is supplied as it appears at the 5' end of raw R2; after R2 has been
@@ -86,6 +90,60 @@ class ReadTrimSettings:
             if not sequence:
                 raise ValueError(f"{field_name} must not be empty")
             validate_sequence(sequence, field_name=field_name)
+
+
+def validate_primer_orientations(
+    fragments: Iterable[Fragment],
+    trimming: ReadTrimSettings,
+) -> None:
+    """Reject primers that clearly use the wrong sequence orientation."""
+    fragments = list(fragments)
+    primer_reads = (
+        (
+            "--forward-primer",
+            "R1",
+            trimming.forward_primer,
+            [fragment.forward_read.sequence for fragment in fragments],
+        ),
+        (
+            "--reverse-primer",
+            "R2",
+            trimming.reverse_primer,
+            [
+                reverse_complement(fragment.reverse_read.sequence)
+                for fragment in fragments
+            ],
+        ),
+    )
+    for option, read_name, primer, raw_sequences in primer_reads:
+        if primer is None or any(primer in sequence for sequence in raw_sequences):
+            continue
+
+        alternatives = (
+            ("reversed", primer[::-1]),
+            ("complemented", reverse_complement(primer)[::-1]),
+            ("reverse-complemented", reverse_complement(primer)),
+        )
+        matches = [
+            (
+                sum(alternative in sequence for sequence in raw_sequences),
+                description,
+                alternative,
+            )
+            for description, alternative in alternatives
+            if alternative != primer
+        ]
+        match_count, description, suggested_primer = max(
+            matches,
+            default=(0, "", ""),
+        )
+        if match_count:
+            raise PrimerOrientationError(
+                f"{option} matches no raw {read_name} reads, but its "
+                f"{description} sequence {suggested_primer!r} matches "
+                f"{match_count}; supply primers 5' to 3' exactly as they "
+                "occur in the raw FASTQ"
+            )
 
 
 @dataclass(frozen=True)

@@ -170,17 +170,20 @@ def build_sample_result(
     passing_call_count = sum(call.passes_filters for call in calls)
     filtered_candidate_count = len(calls) - passing_call_count
     failed_sample_qc = bool(reasons)
-    ambiguous_evidence_dominates = any(
-        "AMBIGUOUS_EVIDENCE_DOMINATES" in call.filter_reasons
-        for call in calls
+    ambiguous_evidence_dominates_no_call = (
+        passing_call_count == 0
+        and any(
+            "AMBIGUOUS_EVIDENCE_DOMINATES" in call.filter_reasons
+            for call in calls
+        )
     )
-    if ambiguous_evidence_dominates:
+    if ambiguous_evidence_dominates_no_call:
         reasons.append("AMBIGUOUS_ITD_EVIDENCE_DOMINATES")
 
-    if failed_sample_qc or (
-        ambiguous_evidence_dominates and passing_call_count == 0
-    ):
+    if failed_sample_qc or ambiguous_evidence_dominates_no_call:
         qc_status: QCStatus = "fail"
+    elif passing_call_count:
+        qc_status = "pass"
     elif filtered_candidate_count:
         qc_status = "warn"
         reasons.append("FILTERED_ITD_CANDIDATES_PRESENT")

@@ -172,7 +172,7 @@ def test_dominant_ambiguous_evidence_makes_no_call_sample_indeterminate() -> Non
     assert result.qc_reasons == ("AMBIGUOUS_ITD_EVIDENCE_DOMINATES",)
 
 
-def test_dominant_ambiguous_candidate_warns_when_another_call_passes() -> None:
+def test_filtered_ambiguous_candidate_does_not_downgrade_passing_call() -> None:
     ambiguous = ITDCall(
         itd=ITD(
             insertion=Insertion(
@@ -213,12 +213,10 @@ def test_dominant_ambiguous_candidate_warns_when_another_call_passes() -> None:
         thresholds=SampleQCThresholds(),
     )
 
-    assert result.qc_status == "warn"
+    assert result.qc_status == "pass"
     assert result.outcome == "ITD detected"
-    assert result.qc_reasons == (
-        "AMBIGUOUS_ITD_EVIDENCE_DOMINATES",
-        "FILTERED_ITD_CANDIDATES_PRESENT",
-    )
+    assert result.qc_reasons == ()
+    assert result.filtered_candidate_count == 1
 
 
 def test_analysis_error_is_not_reported_as_negative() -> None:

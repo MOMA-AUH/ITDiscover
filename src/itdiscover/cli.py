@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import html
+import sys
 from pathlib import Path
 from typing import TextIO
 
@@ -26,7 +27,12 @@ from .insertions import (
     InsertionEvidenceFilter,
 )
 from .itds import ITD
-from .reads import ReadTrimSettings, preprocess_fragments_with_metrics
+from .reads import (
+    PrimerOrientationError,
+    ReadTrimSettings,
+    preprocess_fragments_with_metrics,
+    validate_primer_orientations,
+)
 from .results import (
     SampleQCThresholds,
     SampleResult,
@@ -278,6 +284,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _run_call_command(args)
+    except PrimerOrientationError as error:
+        _write_analysis_error_reports(args, error)
+        print(f"{parser.prog}: error: {error}", file=sys.stderr)
+        return 2
     except Exception as error:
         _write_analysis_error_reports(args, error)
         raise
@@ -288,8 +298,9 @@ def _run_call_command(args: argparse.Namespace) -> int:
         Path(args.reference)
     )
     reference_sha256 = hashlib.sha256(reference.encode("ascii")).hexdigest()
-    fragments = read_paired_fastq(args.r1, args.r2)
+    fragments = list(read_paired_fastq(args.r1, args.r2))
     trimming = _build_trim_settings(args)
+    validate_primer_orientations(fragments, trimming)
     preprocessing_result = preprocess_fragments_with_metrics(
         fragments,
         min_length=args.min_read_length,
