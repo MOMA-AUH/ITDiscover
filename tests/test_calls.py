@@ -5,6 +5,7 @@ import pytest
 from itdiscover.alleles import CanonicalInsertionAllele
 from itdiscover.calls import (
     ITDCall,
+    ITDConsolidationSettings,
     ITDFilter,
     call_exact_itds,
     call_exact_itds_with_representatives,
@@ -37,6 +38,30 @@ def permissive_filters() -> ITDFilter:
         min_mutant_fragment_count=1,
         min_informative_fragment_count=0,
         min_observed_mutant_fragment_fraction=0,
+    )
+
+
+def insertion_alignment(
+    reference: str,
+    insertion: str,
+    *,
+    read_id: str,
+    fragment_id: str | None = None,
+    direction: str = "forward",
+) -> Alignment:
+    breakpoint = 2
+    read = reference[: breakpoint + 1] + insertion + reference[breakpoint + 1 :]
+    return make_alignment(
+        read_id,
+        read,
+        read,
+        (
+            reference[: breakpoint + 1]
+            + "-" * len(insertion)
+            + reference[breakpoint + 1 :]
+        ),
+        direction=direction,
+        fragment_id=fragment_id,
     )
 
 
@@ -122,6 +147,144 @@ def test_call_exact_itds_reports_mutant_and_informative_fragment_fraction() -> N
             wild_type_fragment_count=7,
         )
     ]
+
+
+def test_consolidation_absorbs_weak_same_breakpoint_sequence_error() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        insertion_alignment(
+            reference,
+            "CCCGGG",
+            read_id=f"anchor-{index}",
+        )
+        for index in range(20)
+    ]
+    alignments.append(
+        insertion_alignment(reference, "CCCCGG", read_id="minor")
+    )
+
+    unconsolidated = call_exact_itds(
+        alignments,
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+    )
+    consolidated = call_exact_itds(
+        alignments,
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=ITDConsolidationSettings(enabled=True),
+    )
+
+    assert len(unconsolidated) == 2
+    assert len(consolidated) == 1
+    assert consolidated[0].mutant_fragment_count == 21
+    assert consolidated[0].consolidated_minor_fragment_count == 1
+    assert consolidated[0].consolidated_members[0].allele.sequence == "CCCCGG"
+    assert consolidated[0].consolidated_members[0].reason == (
+        "same-breakpoint sequence error"
+    )
+
+
+def test_consolidation_reconciles_compatible_mate_observations_once() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        insertion_alignment(
+            reference,
+            "CCCGGG",
+            read_id=f"anchor-{index}",
+        )
+        for index in range(19)
+    ]
+    alignments.extend(
+        [
+            insertion_alignment(
+                reference,
+                "CCCGGG",
+                read_id="paired/1",
+                fragment_id="paired",
+                direction="forward",
+            ),
+            insertion_alignment(
+                reference,
+                "CCCCGG",
+                read_id="paired/2",
+                fragment_id="paired",
+                direction="reverse",
+            ),
+        ]
+    )
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=ITDConsolidationSettings(enabled=True),
+    )[0]
+
+    assert call.mutant_fragment_count == 20
+    assert call.concordant_fragment_count == 1
+    assert call.consolidated_minor_fragment_count == 1
+
+
+def test_consolidation_obeys_breakpoint_and_support_safeguards() -> None:
+    reference = "AAACCCGGGTTT"
+    anchor_alignments = [
+        insertion_alignment(
+            reference,
+            "CCCGGG",
+            read_id=f"anchor-{index}",
+        )
+        for index in range(20)
+    ]
+    shifted_minor = insertion_alignment(
+        reference,
+        "CCCGGA",
+        read_id="shifted-minor",
+    )
+    co_dominant = [
+        insertion_alignment(
+            reference,
+            "CCCCGG",
+            read_id=f"co-dominant-{index}",
+        )
+        for index in range(2)
+    ]
+
+    strict_breakpoint_calls = call_exact_itds(
+        anchor_alignments + [shifted_minor],
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=ITDConsolidationSettings(
+            enabled=True,
+            max_breakpoint_shift=0,
+        ),
+    )
+    shifted_calls = call_exact_itds(
+        anchor_alignments + [shifted_minor],
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=ITDConsolidationSettings(enabled=True),
+    )
+    co_dominant_calls = call_exact_itds(
+        anchor_alignments + co_dominant,
+        reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=ITDConsolidationSettings(enabled=True),
+    )
+
+    assert len(shifted_calls) == 1
+    assert shifted_calls[0].consolidated_members[0].breakpoint_shift == 1
+    assert shifted_calls[0].consolidated_members[0].reason == (
+        "nearby-breakpoint local-haplotype match"
+    )
+    assert len(strict_breakpoint_calls) == 2
+    assert len(co_dominant_calls) == 2
 
 
 def test_call_exact_itds_counts_concordant_and_single_mate_fragments() -> None:

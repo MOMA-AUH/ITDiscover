@@ -16,6 +16,7 @@ from .alignment import (
 )
 from .calls import (
     ITDCall,
+    ITDConsolidationSettings,
     ITDFilter,
     UniqueSupportRepresentative,
     call_exact_itds_with_representatives,
@@ -147,11 +148,60 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--max-mismatches",
+        "--max-copy-mismatches",
+        dest="max_copy_mismatches",
         type=_non_negative_int,
         help=(
             "Maximum mismatches allowed in the copied reference segment; "
-            "0 is equivalent to exact mode."
+            "0 is equivalent to exact mode. ITD detection happens before any "
+            "optional minor-allele consolidation."
+        ),
+    )
+    consolidation_group = parser.add_argument_group(
+        "advanced minor-allele consolidation"
+    )
+    consolidation_group.add_argument(
+        "--consolidate-minor-itd-variants",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Consolidate weak, directly compatible ITD observations into a "
+            "dominant allele. This is opt-in because it changes allele identity."
+        ),
+    )
+    consolidation_group.add_argument(
+        "--consolidation-max-allele-mismatches",
+        dest="consolidation_max_allele_mismatches",
+        type=_non_negative_int,
+        default=1,
+        help=(
+            "Maximum positional mismatches between the complete ALT sequences "
+            "of an already-detected minor allele and its anchor. This advanced "
+            "setting does not affect whether an insertion qualifies as an ITD."
+        ),
+    )
+    consolidation_group.add_argument(
+        "--consolidation-max-breakpoint-shift",
+        type=_non_negative_int,
+        default=6,
+        help="Maximum reference-base shift between minor and anchor breakpoints.",
+    )
+    consolidation_group.add_argument(
+        "--consolidation-max-minor-support-ratio",
+        type=_fraction,
+        default=0.05,
+        help=(
+            "Maximum evidence-passing raw fragment support of a minor allele "
+            "relative to its anchor."
+        ),
+    )
+    consolidation_group.add_argument(
+        "--consolidation-min-anchor-fragment-count",
+        type=_positive_int,
+        default=3,
+        help=(
+            "Minimum evidence-passing raw fragment support required for an "
+            "anchor allele."
         ),
     )
     parser.add_argument(
@@ -351,12 +401,13 @@ def _run_call_command(args: argparse.Namespace) -> int:
         ),
         min_directional_opportunities=args.min_directional_opportunities,
     )
+    consolidation = _build_consolidation_settings(args)
     min_copied_segment_length = (
         args.min_insert_length
         if args.min_copied_segment_length is None
         else args.min_copied_segment_length
     )
-    if args.max_mismatches is None:
+    if args.max_copy_mismatches is None:
         calls, representatives = call_exact_itds_with_representatives(
             alignments,
             reference,
@@ -365,17 +416,19 @@ def _run_call_command(args: argparse.Namespace) -> int:
             require_in_frame=args.require_in_frame,
             filters=filters,
             evidence_filter=insertion_filters,
+            consolidation=consolidation,
         )
     else:
         calls, representatives = call_fuzzy_itds_with_representatives(
             alignments,
             reference,
-            max_mismatches=args.max_mismatches,
+            max_mismatches=args.max_copy_mismatches,
             min_insert_length=args.min_insert_length,
             min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
             filters=filters,
             evidence_filter=insertion_filters,
+            consolidation=consolidation,
         )
     sample_result = build_sample_result(
         sample_id=_sample_id(args),
@@ -391,7 +444,11 @@ def _run_call_command(args: argparse.Namespace) -> int:
             calls,
             representatives,
             filters=filters,
-            max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
+            max_mismatches=(
+                0
+                if args.max_copy_mismatches is None
+                else args.max_copy_mismatches
+            ),
             alignment_filters=alignment_filters,
             insertion_filters=insertion_filters,
             sample_result=sample_result,
@@ -399,6 +456,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             min_insert_length=args.min_insert_length,
             min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
+            consolidation=consolidation,
             reference_id=reference_id,
             reference_length=len(reference),
             reference_sha256=reference_sha256,
@@ -407,7 +465,11 @@ def _run_call_command(args: argparse.Namespace) -> int:
         _write_tsv_call_report(
             args.output_tsv,
             calls,
-            max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
+            max_mismatches=(
+                0
+                if args.max_copy_mismatches is None
+                else args.max_copy_mismatches
+            ),
             min_mutant_fragment_count=filters.min_mutant_fragment_count,
             min_informative_fragment_count=filters.min_informative_fragment_count,
             min_mutant_fragment_fraction=(
@@ -424,6 +486,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             min_insert_length=args.min_insert_length,
             min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
+            consolidation=consolidation,
             reference_id=reference_id,
             reference_length=len(reference),
             reference_sha256=reference_sha256,
@@ -480,6 +543,22 @@ def _build_trim_settings(args: argparse.Namespace) -> ReadTrimSettings:
     )
 
 
+def _build_consolidation_settings(
+    args: argparse.Namespace,
+) -> ITDConsolidationSettings:
+    return ITDConsolidationSettings(
+        enabled=args.consolidate_minor_itd_variants,
+        max_allele_mismatches=args.consolidation_max_allele_mismatches,
+        max_breakpoint_shift=args.consolidation_max_breakpoint_shift,
+        max_minor_to_anchor_support_ratio=(
+            args.consolidation_max_minor_support_ratio
+        ),
+        min_anchor_fragment_count=(
+            args.consolidation_min_anchor_fragment_count
+        ),
+    )
+
+
 def _sample_id(args: argparse.Namespace) -> str:
     if args.sample_id:
         return args.sample_id
@@ -510,6 +589,7 @@ def _write_analysis_error_reports(
         min_median_interbase_coverage=args.min_median_interbase_coverage,
         min_primer_retention_fraction=args.min_primer_retention_fraction,
     )
+    consolidation = _build_consolidation_settings(args)
     if args.output:
         try:
             _write_unique_support_alignment_html_report(
@@ -517,7 +597,9 @@ def _write_analysis_error_reports(
                 [],
                 [],
                 max_mismatches=(
-                    0 if args.max_mismatches is None else args.max_mismatches
+                    0
+                    if args.max_copy_mismatches is None
+                    else args.max_copy_mismatches
                 ),
                 sample_result=result,
                 qc_thresholds=qc_thresholds,
@@ -528,6 +610,7 @@ def _write_analysis_error_reports(
                     else args.min_copied_segment_length
                 ),
                 require_in_frame=args.require_in_frame,
+                consolidation=consolidation,
                 reference_id=reference_id,
                 reference_length=reference_length,
                 reference_sha256=reference_sha256,
@@ -540,7 +623,9 @@ def _write_analysis_error_reports(
                 args.output_tsv,
                 [],
                 max_mismatches=(
-                    0 if args.max_mismatches is None else args.max_mismatches
+                    0
+                    if args.max_copy_mismatches is None
+                    else args.max_copy_mismatches
                 ),
                 min_mutant_fragment_count=args.min_mutant_fragment_count,
                 min_informative_fragment_count=args.min_informative_fragment_count,
@@ -556,6 +641,7 @@ def _write_analysis_error_reports(
                     else args.min_copied_segment_length
                 ),
                 require_in_frame=args.require_in_frame,
+                consolidation=consolidation,
                 reference_id=reference_id,
                 reference_length=reference_length,
                 reference_sha256=reference_sha256,
@@ -566,6 +652,22 @@ def _write_analysis_error_reports(
 
 def _format_filter_reasons(call: ITDCall) -> str:
     return "." if not call.filter_reasons else ";".join(call.filter_reasons)
+
+
+def _format_consolidated_members(call: ITDCall) -> str:
+    if not call.consolidated_members:
+        return "."
+    return " | ".join(
+        (
+            f"start={member.allele.start},"
+            f"sequence={member.allele.sequence},"
+            f"fragments={member.fragment_count},"
+            f"allele_mismatches={member.allele_mismatches},"
+            f"breakpoint_shift={member.breakpoint_shift},"
+            f"reason={member.reason}"
+        )
+        for member in call.consolidated_members
+    )
 
 
 def _format_directional_evidence(
@@ -654,6 +756,7 @@ def _write_unique_support_alignment_html_report(
     min_insert_length: int = 6,
     min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
     reference_id: str | None = None,
     reference_length: int | None = None,
     reference_sha256: str | None = None,
@@ -693,6 +796,7 @@ def _write_unique_support_alignment_html_report(
         min_insert_length=min_insert_length,
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
+        consolidation=consolidation,
     )
     sample_summary = _render_html_sample_summary(sample_result, qc_thresholds)
     reference_summary = _render_html_reference_summary(
@@ -996,6 +1100,7 @@ def _write_tsv_call_report(
     min_insert_length: int = 6,
     min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
     reference_id: str | None = None,
     reference_length: int | None = None,
     reference_sha256: str | None = None,
@@ -1086,6 +1191,14 @@ def _write_tsv_call_report(
                 "Min Insert Length",
                 "Min Copied Segment Length",
                 "Require In-frame Insertions",
+                "Minor-variant Consolidation Enabled",
+                "Consolidation Max Allele Mismatches",
+                "Consolidation Max Breakpoint Shift",
+                "Consolidation Max Minor/Anchor Support Ratio",
+                "Consolidation Min Anchor Fragment Count",
+                "Consolidated Minor Allele Count",
+                "Consolidated Minor Raw Fragment Support",
+                "Consolidated Minor Alleles",
             ]
         )
         mode = "exact" if max_mismatches == 0 else "fuzzy"
@@ -1178,6 +1291,14 @@ def _write_tsv_call_report(
                     min_insert_length,
                     min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
+                    "Yes" if consolidation.enabled else "No",
+                    consolidation.max_allele_mismatches,
+                    consolidation.max_breakpoint_shift,
+                    f"{consolidation.max_minor_to_anchor_support_ratio:.6f}",
+                    consolidation.min_anchor_fragment_count,
+                    len(call.consolidated_members),
+                    call.consolidated_minor_fragment_count,
+                    _format_consolidated_members(call),
                 ]
             )
         if not calls:
@@ -1220,6 +1341,14 @@ def _write_tsv_call_report(
                     min_insert_length,
                     min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
+                    "Yes" if consolidation.enabled else "No",
+                    consolidation.max_allele_mismatches,
+                    consolidation.max_breakpoint_shift,
+                    f"{consolidation.max_minor_to_anchor_support_ratio:.6f}",
+                    consolidation.min_anchor_fragment_count,
+                    ".",
+                    ".",
+                    ".",
                 ]
             )
 
@@ -1415,6 +1544,7 @@ def _render_html_thresholds_section(
     min_insert_length: int = 6,
     min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> str:
     items: list[tuple[str, str]] = []
     if filters is not None:
@@ -1444,10 +1574,30 @@ def _render_html_thresholds_section(
         )
     items.extend(
         [
-            ("Max mismatches", str(max_mismatches)),
+            ("Max copied-segment mismatches", str(max_mismatches)),
             ("Min insert length", str(min_insert_length)),
             ("Min copied-segment length", str(min_copied_segment_length)),
             ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
+            (
+                "Minor-variant consolidation",
+                "Enabled" if consolidation.enabled else "Disabled",
+            ),
+            (
+                "Consolidation max allele mismatches",
+                str(consolidation.max_allele_mismatches),
+            ),
+            (
+                "Consolidation max breakpoint shift",
+                str(consolidation.max_breakpoint_shift),
+            ),
+            (
+                "Consolidation max minor/anchor support ratio",
+                f"{consolidation.max_minor_to_anchor_support_ratio:.3f}",
+            ),
+            (
+                "Consolidation min anchor fragments",
+                str(consolidation.min_anchor_fragment_count),
+            ),
         ]
     )
     if alignment_filters is not None:
@@ -1552,6 +1702,12 @@ def _render_html_call_section(
             else 'No',
         ),
         ('Mutant Fragments', str(call.mutant_fragment_count)),
+        ('Consolidated Minor Alleles', str(len(call.consolidated_members))),
+        (
+            'Consolidated Minor Raw Fragment Support',
+            str(call.consolidated_minor_fragment_count),
+        ),
+        ('Consolidation Audit', _format_consolidated_members(call)),
         ('Wild-type Fragments', str(call.wild_type_fragment_count)),
         ('Informative Fragments', str(call.informative_fragment_count)),
         (

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .alleles import (
     CanonicalInsertionAllele,
@@ -41,6 +41,10 @@ class ITDCall:
     conflicting_fragment_count: int = field(default=0, compare=False)
     unresolved_fragment_count: int = field(default=0, compare=False)
     not_informative_fragment_count: int = field(default=0, compare=False)
+    consolidated_members: tuple["ConsolidatedAlleleMember", ...] = field(
+        default=(),
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         counts = (
@@ -97,6 +101,11 @@ class ITDCall:
         """Return whether the call passes the configured thresholds."""
         return self.status == "PASS"
 
+    @property
+    def consolidated_minor_fragment_count(self) -> int:
+        """Return raw passing-fragment support absorbed from minor alleles."""
+        return sum(member.fragment_count for member in self.consolidated_members)
+
 
 @dataclass(frozen=True)
 class ITDFilter:
@@ -123,6 +132,40 @@ class ITDFilter:
             )
         if self.min_directional_opportunities < 1:
             raise ValueError("min_directional_opportunities must be at least 1")
+
+
+@dataclass(frozen=True)
+class ITDConsolidationSettings:
+    """Safeguards for merging weak observations into a dominant ITD allele."""
+
+    enabled: bool = False
+    max_allele_mismatches: int = 1
+    max_breakpoint_shift: int = 6
+    max_minor_to_anchor_support_ratio: float = 0.05
+    min_anchor_fragment_count: int = 3
+
+    def __post_init__(self) -> None:
+        if self.max_allele_mismatches < 0:
+            raise ValueError("max_allele_mismatches must not be negative")
+        if self.max_breakpoint_shift < 0:
+            raise ValueError("max_breakpoint_shift must not be negative")
+        if not 0 <= self.max_minor_to_anchor_support_ratio <= 1:
+            raise ValueError(
+                "max_minor_to_anchor_support_ratio must be between 0 and 1"
+            )
+        if self.min_anchor_fragment_count < 1:
+            raise ValueError("min_anchor_fragment_count must be at least 1")
+
+
+@dataclass(frozen=True)
+class ConsolidatedAlleleMember:
+    """One minor observed allele absorbed into a dominant call."""
+
+    allele: CanonicalInsertionAllele
+    fragment_count: int
+    allele_mismatches: int
+    breakpoint_shift: int
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -174,6 +217,7 @@ class _CandidateObservation:
     observed_allele: CanonicalInsertionAllele
     canonical_allele: CanonicalInsertionAllele
     passes_evidence: bool
+    consolidated_from: CanonicalInsertionAllele | None = None
 
 
 # Exact observed ALT identity is independent of an aligner's arbitrary gap
@@ -191,6 +235,7 @@ def call_exact_itds(
     require_in_frame: bool = True,
     filters: ITDFilter = ITDFilter(),
     evidence_filter: InsertionEvidenceFilter | None = None,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> list[ITDCall]:
     """Call exact-match ITDs and attach fragment counts and observed fraction."""
     calls, _ = call_exact_itds_with_representatives(
@@ -201,6 +246,7 @@ def call_exact_itds(
         require_in_frame=require_in_frame,
         filters=filters,
         evidence_filter=evidence_filter,
+        consolidation=consolidation,
     )
     return calls
 
@@ -215,6 +261,7 @@ def call_fuzzy_itds(
     require_in_frame: bool = True,
     filters: ITDFilter = ITDFilter(),
     evidence_filter: InsertionEvidenceFilter | None = None,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> list[ITDCall]:
     """Call fuzzy-match ITDs and attach fragment counts and observed fraction."""
     if max_mismatches < 0:
@@ -228,6 +275,7 @@ def call_fuzzy_itds(
         require_in_frame=require_in_frame,
         filters=filters,
         evidence_filter=evidence_filter,
+        consolidation=consolidation,
     )
     return calls
 
@@ -242,6 +290,7 @@ def call_fuzzy_itds_with_representatives(
     require_in_frame: bool = True,
     filters: ITDFilter = ITDFilter(),
     evidence_filter: InsertionEvidenceFilter | None = None,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> tuple[list[ITDCall], list[UniqueSupportRepresentative]]:
     """Call fuzzy-match ITDs and retain one alignment per unique support pattern."""
     if max_mismatches < 0:
@@ -251,7 +300,12 @@ def call_fuzzy_itds_with_representatives(
         min_copied_segment_length,
     )
     alignments = list(alignments)
-    grouped_itds, representative_map, consensus_by_key = _collect_fuzzy_itd_support(
+    (
+        grouped_itds,
+        representative_map,
+        consensus_by_key,
+        consolidated_members_by_key,
+    ) = _collect_fuzzy_itd_support(
         alignments,
         reference,
         max_mismatches=max_mismatches,
@@ -259,6 +313,7 @@ def call_fuzzy_itds_with_representatives(
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
         evidence_filter=evidence_filter,
+        consolidation=consolidation,
     )
 
     calls: list[ITDCall] = []
@@ -315,6 +370,7 @@ def call_fuzzy_itds_with_representatives(
             not_informative_fragment_count=len(
                 consensus.not_informative_fragment_ids
             ),
+            consolidated_members=consolidated_members_by_key.get(key, ()),
         )
         calls.append(call)
         representatives.extend(
@@ -335,6 +391,7 @@ def call_exact_itds_with_representatives(
     require_in_frame: bool = True,
     filters: ITDFilter = ITDFilter(),
     evidence_filter: InsertionEvidenceFilter | None = None,
+    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> tuple[list[ITDCall], list[UniqueSupportRepresentative]]:
     """Call exact-match ITDs and retain one alignment per unique support pattern."""
     min_copied_segment_length = _resolved_min_copied_segment_length(
@@ -342,13 +399,19 @@ def call_exact_itds_with_representatives(
         min_copied_segment_length,
     )
     alignments = list(alignments)
-    grouped_itds, representative_map, consensus_by_key = _collect_exact_itd_support(
+    (
+        grouped_itds,
+        representative_map,
+        consensus_by_key,
+        consolidated_members_by_key,
+    ) = _collect_exact_itd_support(
         alignments,
         reference,
         min_insert_length=min_insert_length,
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
         evidence_filter=evidence_filter,
+        consolidation=consolidation,
     )
 
     calls: list[ITDCall] = []
@@ -405,6 +468,7 @@ def call_exact_itds_with_representatives(
             not_informative_fragment_count=len(
                 consensus.not_informative_fragment_ids
             ),
+            consolidated_members=consolidated_members_by_key.get(key, ()),
         )
         calls.append(call)
         representatives.extend(
@@ -497,10 +561,12 @@ def _collect_exact_itd_support(
     min_copied_segment_length: int,
     require_in_frame: bool,
     evidence_filter: InsertionEvidenceFilter | None,
+    consolidation: ITDConsolidationSettings,
 ) -> tuple[
     dict[ITDCallKey, list[ITD]],
     SupportRepresentativeMap,
     dict[ITDCallKey, FragmentConsensusSupport],
+    dict[ITDCallKey, tuple[ConsolidatedAlleleMember, ...]],
 ]:
     alignments = list(alignments)
     grouped_itds: dict[ITDCallKey, list[ITD]] = defaultdict(list)
@@ -555,6 +621,11 @@ def _collect_exact_itd_support(
                 )
             )
 
+    observations, consolidated_members_by_key = _consolidate_observations(
+        observations,
+        reference,
+        consolidation,
+    )
     consensus_by_key = _fragment_consensus_support(
         observations,
         alignments,
@@ -616,7 +687,12 @@ def _collect_exact_itd_support(
                 canonical_allele=key,
             )
 
-    return grouped_itds, finalized_map, consensus_by_key
+    return (
+        grouped_itds,
+        finalized_map,
+        consensus_by_key,
+        consolidated_members_by_key,
+    )
 
 
 def _collect_fuzzy_itd_support(
@@ -628,10 +704,12 @@ def _collect_fuzzy_itd_support(
     min_copied_segment_length: int,
     require_in_frame: bool,
     evidence_filter: InsertionEvidenceFilter | None,
+    consolidation: ITDConsolidationSettings,
 ) -> tuple[
     dict[ITDCallKey, list[ITD]],
     SupportRepresentativeMap,
     dict[ITDCallKey, FragmentConsensusSupport],
+    dict[ITDCallKey, tuple[ConsolidatedAlleleMember, ...]],
 ]:
     alignments = list(alignments)
     grouped_itds: dict[ITDCallKey, list[ITD]] = defaultdict(list)
@@ -696,6 +774,11 @@ def _collect_fuzzy_itd_support(
                 )
             )
 
+    observations, consolidated_members_by_key = _consolidate_observations(
+        observations,
+        reference,
+        consolidation,
+    )
     consensus_by_key = _fragment_consensus_support(
         observations,
         alignments,
@@ -782,7 +865,185 @@ def _collect_fuzzy_itd_support(
                 canonical_allele=key,
             )
 
-    return grouped_itds, finalized_map, consensus_by_key
+    return (
+        grouped_itds,
+        finalized_map,
+        consensus_by_key,
+        consolidated_members_by_key,
+    )
+
+
+def _consolidate_observations(
+    observations: list[_CandidateObservation],
+    reference: str,
+    settings: ITDConsolidationSettings,
+) -> tuple[
+    list[_CandidateObservation],
+    dict[ITDCallKey, tuple[ConsolidatedAlleleMember, ...]],
+]:
+    """Assign weak compatible alleles directly to dominant anchor alleles."""
+    if not settings.enabled:
+        return observations, {}
+
+    fragment_ids_by_key: dict[ITDCallKey, set[str]] = defaultdict(set)
+    keys: set[ITDCallKey] = set()
+    for observation in observations:
+        key = observation.canonical_allele
+        keys.add(key)
+        if observation.passes_evidence:
+            fragment_ids_by_key[key].add(observation.alignment.fragment_id)
+
+    support_by_key = {
+        key: len(fragment_ids_by_key.get(key, set()))
+        for key in keys
+    }
+    ordered_keys = sorted(
+        keys,
+        key=lambda key: (
+            -support_by_key[key],
+            key.start,
+            key.sequence,
+            key.trailing,
+        ),
+    )
+    anchors: list[ITDCallKey] = []
+    assignment: dict[ITDCallKey, ITDCallKey] = {}
+    member_details: dict[
+        ITDCallKey,
+        list[ConsolidatedAlleleMember],
+    ] = defaultdict(list)
+
+    for key in ordered_keys:
+        compatible = [
+            (
+                _consolidation_rank(
+                    key,
+                    anchor,
+                    support_by_key[anchor],
+                    reference,
+                ),
+                anchor,
+            )
+            for anchor in anchors
+            if _can_consolidate_allele(
+                key,
+                anchor,
+                minor_support=support_by_key[key],
+                anchor_support=support_by_key[anchor],
+                reference=reference,
+                settings=settings,
+            )
+        ]
+        compatible.sort(key=lambda item: (item[0], item[1]))
+        if compatible and (
+            len(compatible) == 1
+            or compatible[0][0] != compatible[1][0]
+        ):
+            rank, anchor = compatible[0]
+            assignment[key] = anchor
+            allele_mismatches, breakpoint_shift, _ = rank
+            member_details[anchor].append(
+                ConsolidatedAlleleMember(
+                    allele=key,
+                    fragment_count=support_by_key[key],
+                    allele_mismatches=allele_mismatches,
+                    breakpoint_shift=breakpoint_shift,
+                    reason=(
+                        "same-breakpoint sequence error"
+                        if breakpoint_shift == 0
+                        else "nearby-breakpoint local-haplotype match"
+                    ),
+                )
+            )
+            continue
+
+        assignment[key] = key
+        if support_by_key[key] >= settings.min_anchor_fragment_count:
+            anchors.append(key)
+
+    consolidated = [
+        replace(
+            observation,
+            canonical_allele=assignment[observation.canonical_allele],
+            consolidated_from=(
+                observation.canonical_allele
+                if assignment[observation.canonical_allele]
+                != observation.canonical_allele
+                else None
+            ),
+        )
+        for observation in observations
+    ]
+    finalized_details = {
+        anchor: tuple(
+            sorted(
+                members,
+                key=lambda member: (
+                    member.allele_mismatches,
+                    member.breakpoint_shift,
+                    -member.fragment_count,
+                    member.allele,
+                ),
+            )
+        )
+        for anchor, members in member_details.items()
+    }
+    return consolidated, finalized_details
+
+
+def _can_consolidate_allele(
+    minor: ITDCallKey,
+    anchor: ITDCallKey,
+    *,
+    minor_support: int,
+    anchor_support: int,
+    reference: str,
+    settings: ITDConsolidationSettings,
+) -> bool:
+    if minor_support < 1:
+        return False
+    if minor.trailing or anchor.trailing:
+        return False
+    if len(minor.sequence) != len(anchor.sequence):
+        return False
+    breakpoint_shift = abs(minor.start - anchor.start)
+    if breakpoint_shift > settings.max_breakpoint_shift:
+        return False
+    if anchor_support < settings.min_anchor_fragment_count:
+        return False
+    if minor_support > (
+        anchor_support * settings.max_minor_to_anchor_support_ratio
+    ):
+        return False
+    return (
+        _alternate_sequence_mismatches(minor, anchor, reference)
+        <= settings.max_allele_mismatches
+    )
+
+
+def _consolidation_rank(
+    minor: ITDCallKey,
+    anchor: ITDCallKey,
+    anchor_support: int,
+    reference: str,
+) -> tuple[int, int, int]:
+    return (
+        _alternate_sequence_mismatches(minor, anchor, reference),
+        abs(minor.start - anchor.start),
+        -anchor_support,
+    )
+
+
+def _alternate_sequence_mismatches(
+    first: ITDCallKey,
+    second: ITDCallKey,
+    reference: str,
+) -> int:
+    first_alt = first.alternate_sequence(reference)
+    second_alt = second.alternate_sequence(reference)
+    if len(first_alt) != len(second_alt):
+        return max(len(first_alt), len(second_alt))
+    return _sequence_mismatches(first_alt, second_alt)
 
 
 def _fragment_consensus_support(
@@ -799,7 +1060,13 @@ def _fragment_consensus_support(
         str,
         dict[
             str,
-            set[tuple[ITDCallKey, CanonicalInsertionAllele]],
+            set[
+                tuple[
+                    ITDCallKey,
+                    CanonicalInsertionAllele,
+                    CanonicalInsertionAllele | None,
+                ]
+            ],
         ],
     ] = defaultdict(lambda: defaultdict(set))
     rejected_candidate_keys_by_fragment: dict[str, set[ITDCallKey]] = defaultdict(
@@ -816,7 +1083,13 @@ def _fragment_consensus_support(
             continue
         candidates_by_fragment_direction[observation.alignment.fragment_id][
             observation.alignment.direction
-        ].add((key, observation.observed_allele))
+        ].add(
+            (
+                key,
+                observation.observed_allele,
+                observation.consolidated_from,
+            )
+        )
 
     alignments_by_fragment_direction: dict[
         str, dict[str, list[Alignment]]
@@ -849,22 +1122,55 @@ def _fragment_consensus_support(
     ) in candidates_by_fragment_direction.items():
         forward_candidates = candidates_by_direction.get("forward", set())
         reverse_candidates = candidates_by_direction.get("reverse", set())
-        candidate_keys = {
-            key for key, _ in forward_candidates | reverse_candidates
+        forward_keys = {key for key, _, _ in forward_candidates}
+        reverse_keys = {key for key, _, _ in reverse_candidates}
+        candidate_keys = forward_keys | reverse_keys
+        if len(forward_keys) > 1 or len(reverse_keys) > 1:
+            for key in candidate_keys:
+                category_sets[key]["unresolved"].add(fragment_id)
+            continue
+        forward_observed = {
+            observed for _, observed, _ in forward_candidates
         }
-        if len(forward_candidates) > 1 or len(reverse_candidates) > 1:
+        reverse_observed = {
+            observed for _, observed, _ in reverse_candidates
+        }
+        forward_unconsolidated_observed = {
+            observed
+            for _, observed, consolidated_from in forward_candidates
+            if consolidated_from is None
+        }
+        reverse_unconsolidated_observed = {
+            observed
+            for _, observed, consolidated_from in reverse_candidates
+            if consolidated_from is None
+        }
+        if (
+            len(forward_observed) > 1
+            and len(forward_unconsolidated_observed) > 1
+        ) or (
+            len(reverse_observed) > 1
+            and len(reverse_unconsolidated_observed) > 1
+        ):
             for key in candidate_keys:
                 category_sets[key]["unresolved"].add(fragment_id)
             continue
 
         if forward_candidates and reverse_candidates:
-            forward_key, forward_observed = next(iter(forward_candidates))
-            reverse_key, reverse_observed = next(iter(reverse_candidates))
+            forward_key = next(iter(forward_keys))
+            reverse_key = next(iter(reverse_keys))
             if forward_key != reverse_key:
                 for key in candidate_keys:
                     category_sets[key]["conflicting"].add(fragment_id)
                 continue
-            if forward_observed != reverse_observed:
+            if (
+                forward_observed != reverse_observed
+                and len(
+                    forward_unconsolidated_observed
+                    | reverse_unconsolidated_observed
+                )
+                > 1
+            ):
                 category_sets[forward_key]["unresolved"].add(fragment_id)
                 continue
             key = forward_key
@@ -872,7 +1178,7 @@ def _fragment_consensus_support(
             category_sets[key]["concordant"].add(fragment_id)
             continue
 
-        key, _ = next(iter(forward_candidates or reverse_candidates))
+        key = next(iter(forward_keys or reverse_keys))
         candidate_direction = "forward" if forward_candidates else "reverse"
         opposite_direction = (
             "reverse" if candidate_direction == "forward" else "forward"
@@ -947,7 +1253,7 @@ def _fragment_consensus_support(
                 ].get(direction, set())
                 supports_candidate = any(
                     candidate_key == key
-                    for candidate_key, _ in direction_candidates
+                    for candidate_key, _, _ in direction_candidates
                 )
                 direction_alignments = alignments_by_fragment_direction[
                     fragment_id
@@ -1077,12 +1383,10 @@ def _insert_sequence_supports(
     mismatches_by_sequence: dict[str, int] = {}
 
     for fragment_id, sequence_mismatches in sequences_by_fragment.items():
-        if len(sequence_mismatches) != 1:
-            raise ValueError(
-                "supporting fragment has unresolved inserted sequences: "
-                f"{fragment_id}"
-            )
-        sequence, mismatches = next(iter(sequence_mismatches.items()))
+        sequence, mismatches = min(
+            sequence_mismatches.items(),
+            key=lambda item: (item[1], item[0]),
+        )
         fragment_ids_by_sequence[sequence].add(fragment_id)
         mismatches_by_sequence[sequence] = mismatches
 
