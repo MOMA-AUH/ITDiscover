@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           auto-update-conda: true
           activate-environment: itdiscover-build
@@ -66,7 +66,7 @@ jobs:
           conda-build --test "${{ steps.locate.outputs.pkg_path }}"
 
       - name: Upload conda artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conda-package
           path: ${{ steps.locate.outputs.pkg_path }}
@@ -86,13 +86,13 @@ jobs:
 
     steps:
       - name: Download conda artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: conda-package
           path: dist
 
       - name: Set up Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           auto-update-conda: true
           activate-environment: itdiscover-publish
