@@ -19,20 +19,57 @@ itdiscover --help
 itdiscover --version
 ```
 
-Example:
+## Worked FLT3 example
+
+The repository includes synthetic paired-end reads constructed from a real
+329-base human FLT3 amplicon reference sequence. The locus is
+[human FLT3](https://www.ncbi.nlm.nih.gov/gene/2322), and the 11F/12R primer
+pair is a published assay that produces a 329-base wild-type product
+([method description](https://www.nature.com/articles/s41467-026-68582-2)).
+From a source checkout, run:
 
 ```bash
+mkdir -p example-output
+
 itdiscover \
-  --reference reference.fasta \
-  --r1 sample_R1.fastq.gz \
-  --r2 sample_R2.fastq.gz \
-  --forward-primer GGGTTT \
-  --reverse-primer AAACCC \
-  --output report.html
+  --reference tests/data/synthetic_flt3/reference.fa \
+  --r1 tests/data/synthetic_flt3/synthetic_R1.fastq \
+  --r2 tests/data/synthetic_flt3/synthetic_R2.fastq \
+  --forward-primer GCAATTTAGGTATGAAAGCCAGC \
+  --reverse-primer CTTTCAGCATTTTGACGGCAACC \
+  --sample-id synthetic-flt3 \
+  --output example-output/report.html \
+  --output-tsv example-output/calls.tsv
 ```
 
-The `--output` flag writes an HTML report with one representative alignment per called duplication.
-The `--output-tsv` flag writes a tab-separated summary of the called ITDs.
+The expected primary result is:
+
+| Report field | Expected value |
+|---|---|
+| Analysis status | `complete` |
+| QC status | `warn` |
+| Outcome | `ITD detected` |
+| Inserted sequence | `AGAGAATATGAATAT` |
+| Insertion coordinate | after reference base 78 |
+| Copied reference segment | bases 79–93, immediately after the insertion |
+| Mutant fragments | 3 |
+| Wild-type fragments | 9 |
+| Informative fragments | 12 |
+| Observed mutant-fragment fraction | 25.0% (`3/12`) |
+
+In plain language: an ITD is detected, and 3 of the 12 fragments that can
+confidently distinguish this allele from wild type support the ITD. The sample
+has `warn` rather than `pass` QC because a second candidate is reported but
+fails the minimum of three mutant fragments. The 25.0% value is an observed
+post-filter fragment fraction, not a clinically validated VAF or allelic ratio.
+The reads are synthetic and the default thresholds are research defaults, so
+this example demonstrates interpretation of ITDiscover output rather than a
+validated clinical result.
+
+The `--output` flag writes an HTML report with one representative alignment per
+called duplication. The `--output-tsv` flag writes the same call and QC facts
+as tab-separated data.
+
 By default, `PASS` requires at least 3 mutant fragments, 10 informative
 fragments, and an observed mutant-fragment fraction of 0.01. These are
 conservative research defaults, not clinically validated thresholds.
@@ -122,7 +159,7 @@ can permit more than one equivalent gap placement. ITDiscover groups those
 placements as one canonical allele before counting fragments; the
 before/after label only explains the selected report representation.
 
-For example, the bundled full-length FLT3 example contains an insertion after
+For example, the bundled FLT3 amplicon example contains an insertion after
 reference base 78. The inserted sequence `AGAGAATATGAATAT` copies reference
 bases 79–93, so the report says that the copied segment is immediately after
 the insertion. These coordinates and bases come from

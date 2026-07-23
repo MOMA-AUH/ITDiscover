@@ -1,5 +1,6 @@
 import csv
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -68,6 +69,65 @@ def test_preferred_options_preserve_legacy_destinations() -> None:
     assert args.max_single_direction_fraction == 0.8
     assert args.min_directional_observations == 7
     assert args.min_tandem_length == 9
+
+
+def test_documented_flt3_example_has_expected_interpretation(
+    tmp_path,
+    capsys,
+) -> None:
+    data_dir = Path(__file__).parent / "data" / "synthetic_flt3"
+    html_path = tmp_path / "report.html"
+    tsv_path = tmp_path / "calls.tsv"
+
+    assert cli.main(
+        [
+            "--reference",
+            str(data_dir / "reference.fa"),
+            "--r1",
+            str(data_dir / "synthetic_R1.fastq"),
+            "--r2",
+            str(data_dir / "synthetic_R2.fastq"),
+            "--forward-primer",
+            "GCAATTTAGGTATGAAAGCCAGC",
+            "--reverse-primer",
+            "CTTTCAGCATTTTGACGGCAACC",
+            "--sample-id",
+            "synthetic-flt3",
+            "--output",
+            str(html_path),
+            "--output-tsv",
+            str(tsv_path),
+        ]
+    ) == 0
+
+    assert capsys.readouterr().out == ""
+    rows = list(
+        csv.DictReader(
+            tsv_path.read_text(encoding="utf-8").splitlines(),
+            delimiter="\t",
+        )
+    )
+    assert len(rows) == 2
+    passing, filtered = rows
+    assert passing["Status"] == "PASS"
+    assert passing["Sample ID"] == "synthetic-flt3"
+    assert passing["Reference Length"] == "329"
+    assert passing["Outcome"] == "ITD detected"
+    assert passing["QC Status"] == "warn"
+    assert passing["Insertion Sequence"] == "AGAGAATATGAATAT"
+    insertion_coordinate = (
+        "Insertion After Reference Base (0-based; -1=before first)"
+    )
+    assert passing[insertion_coordinate] == "78"
+    assert passing["Copied Segment Start (0-based)"] == "79"
+    assert passing["Copied Segment End (0-based, inclusive)"] == "93"
+    assert passing["Copied Segment Location"] == "immediately after insertion"
+    assert passing["Mutant Fragment Count"] == "3"
+    assert passing["Wild-type Fragment Count"] == "9"
+    assert passing["Informative Fragment Count"] == "12"
+    assert passing["Observed Mutant-fragment Fraction"] == "0.250000"
+    assert filtered["Status"] == "FAIL"
+    assert filtered["Filter Reasons"] == "LOW_MUTANT_FRAGMENT_COUNT"
 
 
 def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> None:

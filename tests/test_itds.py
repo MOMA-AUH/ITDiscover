@@ -57,7 +57,7 @@ def test_classifies_copy_after_insertion() -> None:
     assert itd.copied_segment_location == "after"
 
 
-def test_reports_copied_segment_from_full_length_flt3_reference() -> None:
+def test_reports_copied_segment_from_flt3_amplicon_reference() -> None:
     reference_path = (
         Path(__file__).parent / "data" / "synthetic_flt3" / "reference.fa"
     )
