@@ -141,6 +141,12 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
             "9",
             "--max-copy-mismatch-rate",
             "0.125",
+            "--min-junction-anchor-quality",
+            "31",
+            "--min-insert-mean-quality",
+            "29.5",
+            "--min-insert-base-quality",
+            "12",
             "--consolidate-minor-itd-variants",
             "--consolidation-max-allele-mismatch-rate",
             "0.2",
@@ -157,6 +163,9 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
     assert args.min_directional_opportunities == 7
     assert args.min_copied_segment_length == 9
     assert args.max_copy_mismatch_rate == 0.125
+    assert args.min_junction_anchor_quality == 31
+    assert args.min_insert_mean_quality == 29.5
+    assert args.min_insert_base_quality == 12
     assert args.consolidate_minor_itd_variants is True
     assert args.consolidation_max_allele_mismatch_rate == 0.2
     assert args.consolidation_max_breakpoint_shift_rate == 0.5
@@ -175,9 +184,10 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
         "--max-copy-mismatches",
         "--consolidation-max-allele-mismatches",
         "--consolidation-max-breakpoint-shift",
+        "--min-junction-quality",
     ],
 )
-def test_removed_matching_option_aliases_are_rejected(
+def test_removed_option_aliases_are_rejected(
     removed_option,
     capsys,
 ) -> None:
@@ -528,7 +538,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Min On-target Fraction",
         "Min Alignment Score",
         "Reject Ambiguous Alignments",
-        "Min Junction Quality",
+        "Min Junction Anchor Quality",
+        "Min Insert Mean Quality",
+        "Min Insert Base Quality",
         "Junction Flank Size",
         "Sample ID",
         "Analysis Status",
@@ -610,28 +622,29 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "0.500000",
         "1/2 informative fragments",
     ]
-    assert rows[1][34:39] == [
+    assert rows[1][32:36] == ["30", "30.000000", "15", "3"]
+    assert rows[1][36:41] == [
         "sample",
         "complete",
         "fail",
         "indeterminate",
         "LOW_USABLE_FRAGMENT_COUNT;LOW_MEDIAN_INTERBASE_COVERAGE",
     ]
-    assert rows[1][60:62] == ["0", "1"]
-    assert rows[1][67:73] == ["1", "0", "0", "0", "1", "0"]
-    assert rows[1][73:75] == ["FLT3 exon 14-15 assay", "12"]
-    assert rows[1][75] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
-    assert rows[1][76] == cli.COORDINATE_CONVENTION
-    assert rows[1][77] == "immediately before insertion"
-    assert rows[1][78:81] == ["6", "6", "Yes"]
-    assert rows[1][81:86] == [
+    assert rows[1][62:64] == ["0", "1"]
+    assert rows[1][69:75] == ["1", "0", "0", "0", "1", "0"]
+    assert rows[1][75:77] == ["FLT3 exon 14-15 assay", "12"]
+    assert rows[1][77] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
+    assert rows[1][78] == cli.COORDINATE_CONVENTION
+    assert rows[1][79] == "immediately before insertion"
+    assert rows[1][80:83] == ["6", "6", "Yes"]
+    assert rows[1][83:88] == [
         "No",
         "0.125000",
         "1.000000",
         "0.050000",
         "3",
     ]
-    assert rows[1][86:] == ["0", "0", "."]
+    assert rows[1][88:] == ["0", "0", "."]
 
 
 def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
@@ -688,7 +701,7 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
     )
     assert len(rows) == 2
     assert rows[1][0] == "."
-    assert rows[1][34:39] == [
+    assert rows[1][36:41] == [
         "negative",
         "complete",
         "pass",
@@ -749,7 +762,7 @@ def test_cli_can_report_short_out_of_frame_tandem_when_explicitly_enabled(
     )
     assert rows[1][8] == "CCC"
     assert rows[1][11] == "CCCA"
-    assert rows[1][78:81] == ["4", "3", "No"]
+    assert rows[1][80:83] == ["4", "3", "No"]
 
 
 def test_analysis_error_report_is_indeterminate(tmp_path) -> None:

@@ -273,10 +273,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--min-junction-quality",
+        "--min-junction-anchor-quality",
         type=_non_negative_int,
         default=30,
-        help="Minimum Phred quality for inserted bases and junction anchors.",
+        help="Minimum Phred quality for every junction-anchor base.",
+    )
+    parser.add_argument(
+        "--min-insert-mean-quality",
+        type=_non_negative_float,
+        default=30.0,
+        help="Minimum mean Phred quality across inserted bases.",
+    )
+    parser.add_argument(
+        "--min-insert-base-quality",
+        type=_non_negative_int,
+        default=15,
+        help="Minimum Phred quality permitted for any inserted base.",
     )
     parser.add_argument(
         "--junction-flank-size",
@@ -390,7 +402,9 @@ def _run_call_command(args: argparse.Namespace) -> int:
         min_primer_retention_fraction=args.min_primer_retention_fraction,
     )
     insertion_filters = InsertionEvidenceFilter(
-        min_junction_quality=args.min_junction_quality,
+        min_junction_anchor_quality=args.min_junction_anchor_quality,
+        min_insert_mean_quality=args.min_insert_mean_quality,
+        min_insert_base_quality=args.min_insert_base_quality,
         junction_flank_size=args.junction_flank_size,
     )
     filters = ITDFilter(
@@ -505,6 +519,13 @@ def _tsv_output_path(value: str) -> Path:
 
 def _non_negative_int(value: str) -> int:
     parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must not be negative")
+    return parsed
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must not be negative")
     return parsed
@@ -1135,7 +1156,9 @@ def _write_tsv_call_report(
                 "Min On-target Fraction",
                 "Min Alignment Score",
                 "Reject Ambiguous Alignments",
-                "Min Junction Quality",
+                "Min Junction Anchor Quality",
+                "Min Insert Mean Quality",
+                "Min Insert Base Quality",
                 "Junction Flank Size",
                 "Sample ID",
                 "Analysis Status",
@@ -1260,7 +1283,17 @@ def _write_tsv_call_report(
                         else "No"
                     ),
                     (
-                        insertion_filters.min_junction_quality
+                        insertion_filters.min_junction_anchor_quality
+                        if insertion_filters is not None
+                        else "."
+                    ),
+                    (
+                        f"{insertion_filters.min_insert_mean_quality:.6f}"
+                        if insertion_filters is not None
+                        else "."
+                    ),
+                    (
+                        insertion_filters.min_insert_base_quality
                         if insertion_filters is not None
                         else "."
                     ),
@@ -1295,7 +1328,7 @@ def _write_tsv_call_report(
                 ]
             )
         if not calls:
-            empty_call_values: list[object] = ["."] * 34
+            empty_call_values: list[object] = ["."] * 36
             empty_call_values[3] = mode
             empty_call_values[4] = f"{max_copy_mismatch_rate:.6f}"
             empty_call_values[23] = min_mutant_fragment_count
@@ -1317,8 +1350,14 @@ def _write_tsv_call_report(
                     "Yes" if alignment_filters.reject_ambiguous else "No"
                 )
             if insertion_filters is not None:
-                empty_call_values[32] = insertion_filters.min_junction_quality
-                empty_call_values[33] = insertion_filters.junction_flank_size
+                empty_call_values[32] = (
+                    insertion_filters.min_junction_anchor_quality
+                )
+                empty_call_values[33] = (
+                    f"{insertion_filters.min_insert_mean_quality:.6f}"
+                )
+                empty_call_values[34] = insertion_filters.min_insert_base_quality
+                empty_call_values[35] = insertion_filters.junction_flank_size
             writer.writerow(
                 empty_call_values
                 + _sample_tsv_values(sample_result, qc_thresholds)
@@ -1620,8 +1659,16 @@ def _render_html_thresholds_section(
         items.extend(
             [
                 (
-                    "Min junction quality",
-                    str(insertion_filters.min_junction_quality),
+                    "Min junction-anchor quality",
+                    str(insertion_filters.min_junction_anchor_quality),
+                ),
+                (
+                    "Min insert mean quality",
+                    f"{insertion_filters.min_insert_mean_quality:.3f}",
+                ),
+                (
+                    "Min insert base quality",
+                    str(insertion_filters.min_insert_base_quality),
                 ),
                 ("Junction flank size", str(insertion_filters.junction_flank_size)),
             ]

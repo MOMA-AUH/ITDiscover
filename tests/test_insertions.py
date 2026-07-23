@@ -181,17 +181,67 @@ def test_filters_insertions_with_ambiguous_bases() -> None:
     assert extract_insertions(alignment, min_length=3) == []
 
 
-def test_filters_low_quality_junction_evidence() -> None:
+def test_allows_isolated_q29_insert_base_when_insert_mean_passes() -> None:
     alignment = Alignment(
-        read_id="low-junction-quality",
+        read_id="isolated-q29",
         read_sequence="AAACCCCCCGGG",
         aligned_read="AAACCCCCCGGG",
         aligned_reference="AAA------GGG",
         direction="forward",
-        aligned_qualities=(40, 40, 40, 40, 40, 10, 40, 40, 40, 40, 40, 40),
+        aligned_qualities=(40, 40, 40, 29, 40, 40, 40, 40, 40, 40, 40, 40),
+    )
+
+    assert len(
+        extract_insertions(
+            alignment,
+            evidence_filter=InsertionEvidenceFilter(),
+        )
+    ) == 1
+
+
+def test_filters_insertions_with_low_quality_junction_anchor() -> None:
+    alignment = Alignment(
+        read_id="low-anchor-quality",
+        read_sequence="AAACCCCCCGGG",
+        aligned_read="AAACCCCCCGGG",
+        aligned_reference="AAA------GGG",
+        direction="forward",
+        aligned_qualities=(40, 40, 29, 40, 40, 40, 40, 40, 40, 40, 40, 40),
     )
 
     assert extract_insertions(
         alignment,
-        evidence_filter=InsertionEvidenceFilter(min_junction_quality=30),
+        evidence_filter=InsertionEvidenceFilter(),
+    ) == []
+
+
+def test_filters_insertions_with_low_mean_insert_quality() -> None:
+    alignment = Alignment(
+        read_id="low-insert-mean",
+        read_sequence="AAACCCCCCGGG",
+        aligned_read="AAACCCCCCGGG",
+        aligned_reference="AAA------GGG",
+        direction="forward",
+        aligned_qualities=(40, 40, 40, 29, 29, 29, 29, 29, 29, 40, 40, 40),
+    )
+
+    assert extract_insertions(
+        alignment,
+        evidence_filter=InsertionEvidenceFilter(),
+    ) == []
+
+
+def test_filters_insertions_with_one_very_low_quality_insert_base() -> None:
+    alignment = Alignment(
+        read_id="low-insert-base",
+        read_sequence="AAACCCCCCGGG",
+        aligned_read="AAACCCCCCGGG",
+        aligned_reference="AAA------GGG",
+        direction="forward",
+        aligned_qualities=(40, 40, 40, 14, 40, 40, 40, 40, 40, 40, 40, 40),
+    )
+
+    assert extract_insertions(
+        alignment,
+        evidence_filter=InsertionEvidenceFilter(),
     ) == []

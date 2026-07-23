@@ -1362,7 +1362,7 @@ def _alignment_supports_wild_type_junction(
             quality = alignment.aligned_qualities[column]
             if (
                 quality is None
-                or quality < evidence_filter.min_junction_quality
+                or quality < evidence_filter.min_junction_anchor_quality
             ):
                 return False
     return True

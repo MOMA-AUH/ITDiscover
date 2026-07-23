@@ -84,13 +84,19 @@ Evidence is classified separately for each candidate ALT allele and fragment:
   confidently, including candidate evidence rejected by local quality filters;
 - `not informative`: the fragment does not cover the candidate junction.
 
-Mutant and wild-type evidence use the same configured junction anchors and
-quality threshold. The reported **observed mutant-fragment fraction** is
-`mutant / (mutant + wild type)`, displayed with both counts, for example
-`12.3% (37/301 informative fragments)`. Conflicting, unresolved, and
-not-informative fragments do not enter the fraction but are always reported.
-If conflicting plus unresolved fragments outnumber informative fragments, the
-candidate fails and a sample without another passing call is indeterminate.
+Mutant and wild-type evidence use the same configured junction anchors. Every
+anchor base must meet `--min-junction-anchor-quality` (default Q30). Mutant
+evidence additionally requires the inserted bases to have at least the mean
+quality set by `--min-insert-mean-quality` (default Q30), with no inserted base
+below `--min-insert-base-quality` (default Q15). This avoids making the chance
+of rejection grow simply because an insertion is longer while retaining a
+hard safeguard against an effectively uncalled inserted base. The reported
+**observed mutant-fragment fraction** is `mutant / (mutant + wild type)`,
+displayed with both counts, for example `12.3% (37/301 informative fragments)`.
+Conflicting, unresolved, and not-informative fragments do not enter the
+fraction but are always reported. If conflicting plus unresolved fragments
+outnumber informative fragments, the candidate fails and a sample without
+another passing call is indeterminate.
 
 Mate evidence is reconciled before these states are assigned. `concordant`
 fragments have compatible candidate evidence from both mates. `single-mate`
@@ -144,8 +150,8 @@ ratio. It must not be interpreted as interchangeable with capillary
 electrophoresis allelic ratio or a VAF from another library method.
 
 FASTQ-derived evidence is also screened for read-to-reference identity and
-on-target fraction, Phred quality across the inserted sequence and three-base
-junction anchors, and directional read imbalance.
+on-target fraction, the local insertion and junction-anchor quality rules
+described above, and directional read imbalance.
 Use `itdiscover --help` to inspect or override every evidence threshold. Raw
 alignment score filtering and rejection of multiply optimal alignments are
 available but disabled by default because suitable cutoffs and equivalent-gap

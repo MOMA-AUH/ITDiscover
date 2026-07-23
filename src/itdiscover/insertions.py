@@ -49,12 +49,20 @@ class Alignment:
 class InsertionEvidenceFilter:
     """Base-quality safeguards for insertion evidence."""
 
-    min_junction_quality: int = 30
+    min_junction_anchor_quality: int = 30
+    min_insert_mean_quality: float = 30.0
+    min_insert_base_quality: int = 15
     junction_flank_size: int = 3
 
     def __post_init__(self) -> None:
-        if self.min_junction_quality < 0:
-            raise ValueError("min_junction_quality must not be negative")
+        if self.min_junction_anchor_quality < 0:
+            raise ValueError(
+                "min_junction_anchor_quality must not be negative"
+            )
+        if self.min_insert_mean_quality < 0:
+            raise ValueError("min_insert_mean_quality must not be negative")
+        if self.min_insert_base_quality < 0:
+            raise ValueError("min_insert_base_quality must not be negative")
         if self.junction_flank_size < 1:
             raise ValueError("junction_flank_size must be at least 1")
 
@@ -172,7 +180,7 @@ def _passes_insertion_filters(
     if require_in_frame and not trailing and len(sequence) % 3 != 0:
         return False
     if evidence_filter is not None:
-        if not _passes_junction_quality(
+        if not _passes_insertion_quality(
             alignment,
             insert_start_index,
             insert_end_index,
@@ -182,7 +190,7 @@ def _passes_insertion_filters(
     return True
 
 
-def _passes_junction_quality(
+def _passes_insertion_quality(
     alignment: Alignment,
     insert_start_index: int,
     insert_end_index: int,
@@ -194,19 +202,39 @@ def _passes_junction_quality(
         return True
 
     flank = evidence_filter.junction_flank_size
-    quality_indices = list(range(insert_start_index, insert_end_index))
-    quality_indices.extend(
-        _nearest_read_base_indices(alignment, insert_start_index - 1, -1, flank)
+    insert_indices = list(range(insert_start_index, insert_end_index))
+    anchor_indices = _nearest_read_base_indices(
+        alignment,
+        insert_start_index - 1,
+        -1,
+        flank,
     )
-    quality_indices.extend(
+    anchor_indices.extend(
         _nearest_read_base_indices(alignment, insert_end_index, 1, flank)
     )
-    if len(quality_indices) < (insert_end_index - insert_start_index) + 2 * flank:
+    if len(anchor_indices) < 2 * flank:
         return False
-    qualities = [alignment.aligned_qualities[index] for index in quality_indices]
-    return all(
-        quality is not None and quality >= evidence_filter.min_junction_quality
-        for quality in qualities
+    insert_qualities = [
+        alignment.aligned_qualities[index] for index in insert_indices
+    ]
+    anchor_qualities = [
+        alignment.aligned_qualities[index] for index in anchor_indices
+    ]
+    if any(quality is None for quality in insert_qualities + anchor_qualities):
+        return False
+    if any(
+        quality < evidence_filter.min_junction_anchor_quality
+        for quality in anchor_qualities
+    ):
+        return False
+    if any(
+        quality < evidence_filter.min_insert_base_quality
+        for quality in insert_qualities
+    ):
+        return False
+    return (
+        sum(insert_qualities) / len(insert_qualities)
+        >= evidence_filter.min_insert_mean_quality
     )
 
 

@@ -418,7 +418,7 @@ def test_call_exact_itds_counts_concordant_and_single_mate_fragments() -> None:
     assert call.unresolved_fragment_count == 0
 
 
-def test_low_quality_mutant_evidence_is_unresolved_not_wild_type() -> None:
+def test_isolated_q29_insert_base_remains_mutant_evidence() -> None:
     reference = "AAACCCGGGTTT"
     mutant = "AAACCCGGGCCCGGGTTT"
     alignments = [
@@ -458,12 +458,51 @@ def test_low_quality_mutant_evidence_is_unresolved_not_wild_type() -> None:
         evidence_filter=InsertionEvidenceFilter(),
     )[0]
 
+    assert call.mutant_fragment_count == 1
+    assert call.wild_type_fragment_count == 1
+    assert call.informative_fragment_count == 2
+    assert call.conflicting_fragment_count == 0
+    assert call.unresolved_fragment_count == 0
+    assert call.not_informative_fragment_count == 1
+    assert call.r1_opportunity_count == 2
+    assert call.observed_mutant_fragment_fraction == 0.5
+
+
+def test_very_low_insert_base_is_unresolved_not_wild_type() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    alignments = [
+        Alignment(
+            read_id="low-quality-mutant/1",
+            fragment_id="low-quality-mutant",
+            read_sequence=mutant,
+            aligned_read=mutant,
+            aligned_reference="AAA------CCCGGGTTT",
+            direction="forward",
+            aligned_qualities=(40, 40, 40, 14) + (40,) * 14,
+        ),
+        Alignment(
+            read_id="wild-type/1",
+            fragment_id="wild-type",
+            read_sequence=reference,
+            aligned_read=reference,
+            aligned_reference=reference,
+            direction="forward",
+            aligned_qualities=(40,) * len(reference),
+        ),
+    ]
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=permissive_filters(),
+        evidence_filter=InsertionEvidenceFilter(),
+    )[0]
+
     assert call.mutant_fragment_count == 0
     assert call.wild_type_fragment_count == 1
     assert call.informative_fragment_count == 1
-    assert call.conflicting_fragment_count == 0
     assert call.unresolved_fragment_count == 1
-    assert call.not_informative_fragment_count == 1
     assert call.r1_opportunity_count == 1
     assert call.observed_mutant_fragment_fraction == 0
 
