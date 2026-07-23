@@ -32,8 +32,8 @@ def test_classifies_copy_before_insertion_without_rewriting_breakpoint() -> None
     assert itd is not None
     assert itd == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
     assert itd.copied_segment_location == "before"
 
@@ -51,8 +51,8 @@ def test_classifies_copy_after_insertion() -> None:
     assert itd is not None
     assert itd == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
     assert itd.copied_segment_location == "after"
 
@@ -88,8 +88,8 @@ def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
 
     assert classify_exact_itd(insertion, "AAAAAAAAAAAA") == ITD(
         insertion=insertion,
-        tandem_start=0,
-        tandem_sequence="AAAAAA",
+        copied_segment_start=0,
+        copied_segment_sequence="AAAAAA",
     )
 
 
@@ -103,8 +103,8 @@ def test_uses_copy_after_insertion_for_leading_repetitive_itd() -> None:
 
     assert classify_exact_itd(insertion, "AAAAAAAAAAAA") == ITD(
         insertion=insertion,
-        tandem_start=1,
-        tandem_sequence="AAAAAA",
+        copied_segment_start=1,
+        copied_segment_sequence="AAAAAA",
     )
 
 
@@ -118,8 +118,8 @@ def test_classifies_exact_tandem_with_spacers_on_both_sides() -> None:
 
     assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         spacer_prefix="NNN",
         spacer_suffix="NN",
     )
@@ -175,7 +175,7 @@ def test_classify_exact_itd_rejects_lowercase_reference() -> None:
         classify_exact_itd(insertion, "AAAcccGGGTTT")
 
 
-def test_itd_reports_inclusive_tandem_end_and_length() -> None:
+def test_itd_reports_inclusive_copied_segment_end_and_length() -> None:
     itd = ITD(
         insertion=Insertion(
             read_id="read-1",
@@ -183,18 +183,18 @@ def test_itd_reports_inclusive_tandem_end_and_length() -> None:
             sequence="CCCGGG",
             direction="forward",
         ),
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
 
-    assert itd.tandem_end == 8
+    assert itd.copied_segment_end == 8
     assert itd.copied_segment_location == "before"
     assert itd.length == 6
     assert itd.spacer_sequence == ""
     assert itd.spacer_length == 0
 
 
-def test_itd_derives_location_and_validates_legacy_orientation() -> None:
+def test_itd_rejects_nonadjacent_copied_segment() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=8,
@@ -202,18 +202,11 @@ def test_itd_derives_location_and_validates_legacy_orientation() -> None:
         direction="forward",
     )
 
-    with pytest.raises(ValueError, match="orientation is inconsistent"):
-        ITD(
-            insertion=insertion,
-            tandem_start=3,
-            tandem_sequence="CCCGGG",
-            orientation="downstream",
-        )
     with pytest.raises(ValueError, match="not adjacent"):
         ITD(
             insertion=insertion,
-            tandem_start=0,
-            tandem_sequence="CCC",
+            copied_segment_start=0,
+            copied_segment_sequence="CCC",
         )
 
 
@@ -229,8 +222,8 @@ def test_scores_exact_tandem_similarity() -> None:
     
     assert similarity == TandemSimilarity(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         mismatches=0,
     )
 
@@ -247,8 +240,8 @@ def test_scores_best_tandem_similarity_with_one_mismatch() -> None:
 
     assert similarity == TandemSimilarity(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         mismatches=1,
     )
     assert similarity.matches == 5
@@ -267,8 +260,8 @@ def test_scores_most_five_prime_tandem_on_tie() -> None:
 
     assert similarity == TandemSimilarity(
         insertion=insertion,
-        tandem_start=0,
-        tandem_sequence="AAA",
+        copied_segment_start=0,
+        copied_segment_sequence="AAA",
         mismatches=0,
     )
 
@@ -283,8 +276,8 @@ def test_classifies_exact_tandem_with_longest_copied_segment_and_spacers() -> No
 
     assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGGTTT",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGGTTT",
         spacer_prefix="",
         spacer_suffix="AAAA",
     )
@@ -304,8 +297,8 @@ def test_classifies_fuzzy_copy_after_insertion_with_one_mismatch() -> None:
         max_mismatches=1,
     ) == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
 
 
@@ -323,8 +316,8 @@ def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
         max_mismatches=1,
     ) == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )
@@ -366,8 +359,8 @@ def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
 
     assert classify_fuzzy_itd(insertion, "AAAAAAA", max_mismatches=1) == ITD(
         insertion=insertion,
-        tandem_start=0,
-        tandem_sequence="AAAAAA",
+        copied_segment_start=0,
+        copied_segment_sequence="AAAAAA",
     )
 
 
@@ -385,8 +378,8 @@ def test_classifies_fuzzy_tandem_with_spacers_and_mismatch_in_copied_segment() -
         max_mismatches=1,
     ) == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )
@@ -416,11 +409,11 @@ def test_minimum_tandem_length_is_configurable_for_three_base_duplication() -> N
     assert classify_exact_itd(
         insertion,
         "AAACCCGGGTTT",
-        min_tandem_length=3,
+        min_copied_segment_length=3,
     ) == ITD(
         insertion=insertion,
-        tandem_start=3,
-        tandem_sequence="CCC",
+        copied_segment_start=3,
+        copied_segment_sequence="CCC",
     )
 
 
@@ -432,9 +425,9 @@ def test_classification_rejects_invalid_minimum_tandem_length() -> None:
         direction="forward",
     )
 
-    with pytest.raises(ValueError, match="min_tandem_length"):
+    with pytest.raises(ValueError, match="min_copied_segment_length"):
         classify_exact_itd(
             insertion,
             "AAACCCGGGTTT",
-            min_tandem_length=0,
+            min_copied_segment_length=0,
         )

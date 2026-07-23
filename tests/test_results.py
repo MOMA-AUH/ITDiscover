@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+from itdiscover.alleles import CanonicalInsertionAllele
 from itdiscover.calls import ITDCall
 from itdiscover.insertions import Insertion
 from itdiscover.itds import ITD
@@ -105,12 +106,15 @@ def test_filtered_candidate_produces_qc_warning_without_becoming_detected() -> N
                 sequence="CCCGGG",
                 direction="forward",
             ),
-            tandem_start=3,
-            tandem_sequence="CCCGGG",
+            copied_segment_start=3,
+            copied_segment_sequence="CCCGGG",
         ),
-        supporting_fragment_count=1,
-        spanning_fragment_count=10,
-        observed_supporting_fragment_fraction=0.1,
+        canonical_allele=CanonicalInsertionAllele(
+            start=2,
+            sequence="CCCGGG",
+        ),
+        mutant_fragment_count=1,
+        wild_type_fragment_count=9,
         status="FAIL",
         filter_reasons=("LOW_MUTANT_FRAGMENT_COUNT",),
     )
@@ -140,14 +144,16 @@ def test_dominant_ambiguous_evidence_makes_no_call_sample_indeterminate() -> Non
                 sequence="CCCGGG",
                 direction="forward",
             ),
-            tandem_start=3,
-            tandem_sequence="CCCGGG",
+            copied_segment_start=3,
+            copied_segment_sequence="CCCGGG",
         ),
-        supporting_fragment_count=3,
+        canonical_allele=CanonicalInsertionAllele(
+            start=2,
+            sequence="CCCGGG",
+        ),
+        mutant_fragment_count=3,
         wild_type_fragment_count=7,
-        spanning_fragment_count=10,
-        observed_supporting_fragment_fraction=0.3,
-        discordant_fragment_count=97,
+        conflicting_fragment_count=97,
         status="FAIL",
         filter_reasons=("AMBIGUOUS_EVIDENCE_DOMINATES",),
     )
@@ -176,22 +182,23 @@ def test_dominant_ambiguous_candidate_warns_when_another_call_passes() -> None:
                 sequence="CCCGGG",
                 direction="forward",
             ),
-            tandem_start=3,
-            tandem_sequence="CCCGGG",
+            copied_segment_start=3,
+            copied_segment_sequence="CCCGGG",
         ),
-        supporting_fragment_count=1,
+        canonical_allele=CanonicalInsertionAllele(
+            start=2,
+            sequence="CCCGGG",
+        ),
+        mutant_fragment_count=1,
         wild_type_fragment_count=9,
-        spanning_fragment_count=10,
-        observed_supporting_fragment_fraction=0.1,
         unresolved_fragment_count=11,
         status="FAIL",
         filter_reasons=("AMBIGUOUS_EVIDENCE_DOMINATES",),
     )
     passing = replace(
         ambiguous,
-        supporting_fragment_count=5,
+        mutant_fragment_count=5,
         wild_type_fragment_count=5,
-        observed_supporting_fragment_fraction=0.5,
         unresolved_fragment_count=0,
         status="PASS",
         filter_reasons=(),

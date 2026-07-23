@@ -6,6 +6,7 @@ import pytest
 
 import itdiscover
 import itdiscover.cli as cli
+from itdiscover.alleles import CanonicalInsertionAllele
 from itdiscover.calls import ITDCall, InsertSequenceSupport, UniqueSupportRepresentative
 from itdiscover.insertions import Alignment
 from itdiscover.insertions import Insertion
@@ -39,7 +40,7 @@ def test_event_length_thresholds_must_be_positive(capsys) -> None:
                 "r1.fastq",
                 "--r2",
                 "r2.fastq",
-                "--min-tandem-length",
+                "--min-copied-segment-length",
                 "0",
             ]
         )
@@ -48,7 +49,7 @@ def test_event_length_thresholds_must_be_positive(capsys) -> None:
     assert "at least 1" in capsys.readouterr().err
 
 
-def test_preferred_options_preserve_legacy_destinations() -> None:
+def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
     args = cli.build_parser().parse_args(
         [
             "--reference",
@@ -66,9 +67,9 @@ def test_preferred_options_preserve_legacy_destinations() -> None:
         ]
     )
 
-    assert args.max_single_direction_fraction == 0.8
-    assert args.min_directional_observations == 7
-    assert args.min_tandem_length == 9
+    assert args.max_directional_mutant_fraction_share == 0.8
+    assert args.min_directional_opportunities == 7
+    assert args.min_copied_segment_length == 9
 
 
 def test_documented_flt3_example_has_expected_interpretation(
@@ -566,7 +567,7 @@ def test_cli_can_report_short_out_of_frame_tandem_when_explicitly_enabled(
             "12",
             "--min-insert-length",
             "4",
-            "--min-tandem-length",
+            "--min-copied-segment-length",
             "3",
             "--no-require-in-frame",
             "--output-tsv",
@@ -880,8 +881,8 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
             sequence="CCCGGG",
             direction="forward",
         ),
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
     lower_itd = ITD(
         insertion=Insertion(
@@ -891,22 +892,28 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
             sequence="TTT",
             direction="forward",
         ),
-        tandem_start=9,
-        tandem_sequence="TTT",
+        copied_segment_start=9,
+        copied_segment_sequence="TTT",
     )
 
     calls = [
         ITDCall(
             itd=lower_itd,
-            supporting_fragment_count=1,
-            spanning_fragment_count=10,
-            observed_supporting_fragment_fraction=0.1,
+            canonical_allele=CanonicalInsertionAllele(
+                start=8,
+                sequence="TTT",
+            ),
+            mutant_fragment_count=1,
+            wild_type_fragment_count=9,
         ),
         ITDCall(
             itd=higher_itd,
-            supporting_fragment_count=5,
-            spanning_fragment_count=10,
-            observed_supporting_fragment_fraction=0.5,
+            canonical_allele=CanonicalInsertionAllele(
+                start=2,
+                sequence="CCCGGG",
+            ),
+            mutant_fragment_count=5,
+            wild_type_fragment_count=5,
         ),
     ]
     representatives = [
@@ -914,6 +921,10 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
             itd=lower_itd,
             signature="lower[sig]",
             alignment=lower_alignment,
+            canonical_allele=CanonicalInsertionAllele(
+                start=8,
+                sequence="TTT",
+            ),
             support_count=1,
             exact_support_count=1,
             mismatches=0,
@@ -925,6 +936,10 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
             itd=higher_itd,
             signature="higher[sig]",
             alignment=higher_alignment,
+            canonical_allele=CanonicalInsertionAllele(
+                start=2,
+                sequence="CCCGGG",
+            ),
             support_count=5,
             exact_support_count=5,
             mismatches=0,
@@ -955,8 +970,8 @@ def test_alignment_difference_classes_do_not_color_indels_yellow() -> None:
             sequence="GGG",
             direction="forward",
         ),
-        tandem_start=9,
-        tandem_sequence="GGG",
+        copied_segment_start=9,
+        copied_segment_sequence="GGG",
     )
     deletion = Alignment(
         read_id="deletion-read",
@@ -997,8 +1012,8 @@ def test_alignment_difference_classes_color_spacers_and_inserted_sequence() -> N
             sequence="NNNCCCGGGNN",
             direction="forward",
         ),
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         spacer_prefix="NNN",
         spacer_suffix="NN",
     )
@@ -1116,9 +1131,9 @@ def test_call_command_filters_without_stdout_report(tmp_path, capsys) -> None:
                 "12",
                 "--min-mean-quality",
                 "30",
-                "--min-support-count",
+                "--min-mutant-fragment-count",
                 "2",
-                "--min-vaf",
+                "--min-mutant-fragment-fraction",
                 "0.6",
             ]
         )

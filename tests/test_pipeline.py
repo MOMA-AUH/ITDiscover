@@ -1,5 +1,6 @@
 import pytest
 
+from itdiscover.alleles import CanonicalInsertionAllele
 from itdiscover.calls import ITDCall, ITDFilter
 from itdiscover.insertions import Insertion
 from itdiscover.itds import ITD
@@ -81,12 +82,15 @@ def test_call_exact_itds_from_fragments_reports_observed_fragment_fraction() -> 
                     sequence="CCCGGG",
                     direction="forward",
                 ),
-                tandem_start=3,
-                tandem_sequence="CCCGGG",
+                copied_segment_start=3,
+                copied_segment_sequence="CCCGGG",
             ),
-            supporting_fragment_count=3,
-            spanning_fragment_count=10,
-            observed_supporting_fragment_fraction=0.3,
+            canonical_allele=CanonicalInsertionAllele(
+                start=2,
+                sequence="CCCGGG",
+            ),
+            mutant_fragment_count=3,
+            wild_type_fragment_count=7,
         )
     ]
 
@@ -136,9 +140,9 @@ def test_call_exact_itds_from_fragments_keeps_passing_mate_when_other_mate_fails
     assert len(calls) == 1
     assert calls[0].itd.insertion.read_id == "reverse-itd/2"
     assert calls[0].itd.insertion.direction == "reverse"
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_from_fragments_excludes_failed_mate_from_support_but_keeps_passing_mate_for_coverage() -> None:
@@ -165,9 +169,9 @@ def test_call_exact_itds_from_fragments_excludes_failed_mate_from_support_but_ke
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_from_fragments_trims_terminal_ns_before_calling() -> None:
@@ -189,9 +193,9 @@ def test_call_exact_itds_from_fragments_trims_terminal_ns_before_calling() -> No
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_from_fragments_counts_overlapping_mates_once() -> None:
@@ -213,9 +217,9 @@ def test_call_exact_itds_from_fragments_counts_overlapping_mates_once() -> None:
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_from_fragments_rejects_lowercase_reference() -> None:
@@ -253,12 +257,15 @@ def test_call_fuzzy_itds_from_fragments_reports_observed_fragment_fraction() -> 
                     sequence="CCCGGA",
                     direction="forward",
                 ),
-                    tandem_start=3,
-                    tandem_sequence="CCCGGG",
+                copied_segment_start=3,
+                copied_segment_sequence="CCCGGG",
             ),
-            supporting_fragment_count=3,
-            spanning_fragment_count=10,
-            observed_supporting_fragment_fraction=0.3,
+            canonical_allele=CanonicalInsertionAllele(
+                start=2,
+                sequence="CCCGGG",
+            ),
+            mutant_fragment_count=3,
+            wild_type_fragment_count=7,
         )
     ]
 
@@ -297,7 +304,7 @@ def test_fragment_pipeline_propagates_short_out_of_frame_event_policy() -> None:
         min_read_length=12,
         min_mean_quality=30,
         min_insert_length=4,
-        min_tandem_length=3,
+        min_copied_segment_length=3,
     ) == []
     calls = call_exact_itds_from_fragments(
         fragments,
@@ -305,12 +312,12 @@ def test_fragment_pipeline_propagates_short_out_of_frame_event_policy() -> None:
         min_read_length=12,
         min_mean_quality=30,
         min_insert_length=4,
-        min_tandem_length=3,
+        min_copied_segment_length=3,
         require_in_frame=False,
     )
 
     assert len(calls) == 1
-    assert calls[0].itd.tandem_sequence == "CCC"
+    assert calls[0].itd.copied_segment_sequence == "CCC"
 
 
 def test_call_fuzzy_itds_from_fragments_rejects_negative_mismatch_threshold() -> None:

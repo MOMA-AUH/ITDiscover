@@ -124,8 +124,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-copied-segment-length",
-        "--min-tandem-length",
-        dest="min_tandem_length",
         type=_positive_int,
         help=(
             "Minimum copied reference-segment length; defaults to "
@@ -151,27 +149,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-mutant-fragment-count",
-        "--min-supporting-fragment-count",
-        "--min-support-count",
-        dest="min_supporting_fragment_count",
         type=_positive_int,
         default=3,
         help="Minimum mutant fragment count required to pass filtering.",
     )
     parser.add_argument(
         "--min-informative-fragment-count",
-        "--min-spanning-fragment-count",
-        "--min-coverage",
-        dest="min_spanning_fragment_count",
         type=_non_negative_int,
         default=10,
         help="Minimum mutant-plus-wild-type fragment count required to pass.",
     )
     parser.add_argument(
         "--min-mutant-fragment-fraction",
-        "--min-supporting-fragment-fraction",
-        "--min-vaf",
-        dest="min_supporting_fragment_fraction",
         type=_fraction,
         default=0.01,
         help=(
@@ -181,8 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-directional-mutant-fraction-share",
-        "--max-single-direction-fraction",
-        dest="max_single_direction_fraction",
         type=_direction_fraction,
         default=0.90,
         help=(
@@ -192,8 +179,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-directional-opportunities",
-        "--min-directional-observations",
-        dest="min_directional_observations",
         type=_positive_int,
         default=5,
         help=(
@@ -361,25 +346,27 @@ def _run_call_command(args: argparse.Namespace) -> int:
         min_adapter_match_length=args.min_adapter_match_length,
     )
     filters = ITDFilter(
-        min_supporting_fragment_count=args.min_supporting_fragment_count,
-        min_spanning_fragment_count=args.min_spanning_fragment_count,
-        min_observed_supporting_fragment_fraction=(
-            args.min_supporting_fragment_fraction
+        min_mutant_fragment_count=args.min_mutant_fragment_count,
+        min_informative_fragment_count=args.min_informative_fragment_count,
+        min_observed_mutant_fragment_fraction=(
+            args.min_mutant_fragment_fraction
         ),
-        max_single_direction_fraction=args.max_single_direction_fraction,
-        min_directional_observations=args.min_directional_observations,
+        max_directional_mutant_fraction_share=(
+            args.max_directional_mutant_fraction_share
+        ),
+        min_directional_opportunities=args.min_directional_opportunities,
     )
-    min_tandem_length = (
+    min_copied_segment_length = (
         args.min_insert_length
-        if args.min_tandem_length is None
-        else args.min_tandem_length
+        if args.min_copied_segment_length is None
+        else args.min_copied_segment_length
     )
     if args.max_mismatches is None:
         calls, representatives = call_exact_itds_with_representatives(
             alignments,
             reference,
             min_insert_length=args.min_insert_length,
-            min_tandem_length=min_tandem_length,
+            min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
             filters=filters,
             evidence_filter=insertion_filters,
@@ -390,7 +377,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             reference,
             max_mismatches=args.max_mismatches,
             min_insert_length=args.min_insert_length,
-            min_tandem_length=min_tandem_length,
+            min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
             filters=filters,
             evidence_filter=insertion_filters,
@@ -415,7 +402,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             sample_result=sample_result,
             qc_thresholds=qc_thresholds,
             min_insert_length=args.min_insert_length,
-            min_tandem_length=min_tandem_length,
+            min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
             reference_id=reference_id,
             reference_length=len(reference),
@@ -426,19 +413,21 @@ def _run_call_command(args: argparse.Namespace) -> int:
             args.output_tsv,
             calls,
             max_mismatches=0 if args.max_mismatches is None else args.max_mismatches,
-            min_supporting_fragment_count=filters.min_supporting_fragment_count,
-            min_spanning_fragment_count=filters.min_spanning_fragment_count,
-            min_supporting_fragment_fraction=(
-                filters.min_observed_supporting_fragment_fraction
+            min_mutant_fragment_count=filters.min_mutant_fragment_count,
+            min_informative_fragment_count=filters.min_informative_fragment_count,
+            min_mutant_fragment_fraction=(
+                filters.min_observed_mutant_fragment_fraction
             ),
-            max_single_direction_fraction=filters.max_single_direction_fraction,
-            min_directional_observations=filters.min_directional_observations,
+            max_directional_mutant_fraction_share=(
+                filters.max_directional_mutant_fraction_share
+            ),
+            min_directional_opportunities=filters.min_directional_opportunities,
             alignment_filters=alignment_filters,
             insertion_filters=insertion_filters,
             sample_result=sample_result,
             qc_thresholds=qc_thresholds,
             min_insert_length=args.min_insert_length,
-            min_tandem_length=min_tandem_length,
+            min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
             reference_id=reference_id,
             reference_length=len(reference),
@@ -546,10 +535,10 @@ def _write_analysis_error_reports(
                 sample_result=result,
                 qc_thresholds=qc_thresholds,
                 min_insert_length=args.min_insert_length,
-                min_tandem_length=(
+                min_copied_segment_length=(
                     args.min_insert_length
-                    if args.min_tandem_length is None
-                    else args.min_tandem_length
+                    if args.min_copied_segment_length is None
+                    else args.min_copied_segment_length
                 ),
                 require_in_frame=args.require_in_frame,
                 reference_id=reference_id,
@@ -566,18 +555,18 @@ def _write_analysis_error_reports(
                 max_mismatches=(
                     0 if args.max_mismatches is None else args.max_mismatches
                 ),
-                min_supporting_fragment_count=args.min_supporting_fragment_count,
-                min_spanning_fragment_count=args.min_spanning_fragment_count,
-                min_supporting_fragment_fraction=(
-                    args.min_supporting_fragment_fraction
+                min_mutant_fragment_count=args.min_mutant_fragment_count,
+                min_informative_fragment_count=args.min_informative_fragment_count,
+                min_mutant_fragment_fraction=(
+                    args.min_mutant_fragment_fraction
                 ),
                 sample_result=result,
                 qc_thresholds=qc_thresholds,
                 min_insert_length=args.min_insert_length,
-                min_tandem_length=(
+                min_copied_segment_length=(
                     args.min_insert_length
-                    if args.min_tandem_length is None
-                    else args.min_tandem_length
+                    if args.min_copied_segment_length is None
+                    else args.min_copied_segment_length
                 ),
                 require_in_frame=args.require_in_frame,
                 reference_id=reference_id,
@@ -676,7 +665,7 @@ def _write_unique_support_alignment_html_report(
     sample_result: SampleResult | None = None,
     qc_thresholds: SampleQCThresholds | None = None,
     min_insert_length: int = 6,
-    min_tandem_length: int = 6,
+    min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
     reference_id: str | None = None,
     reference_length: int | None = None,
@@ -684,27 +673,29 @@ def _write_unique_support_alignment_html_report(
 ) -> None:
     representatives_by_key: dict[object, list[UniqueSupportRepresentative]] = {}
     for representative in representatives:
-        key = representative.canonical_allele or _legacy_itd_identity(
-            representative.itd
-        )
-        representatives_by_key.setdefault(key, []).append(representative)
+        representatives_by_key.setdefault(
+            representative.canonical_allele,
+            [],
+        ).append(representative)
 
     sections: list[str] = []
     ordered_calls = sorted(
         calls,
         key=lambda call: (
-            -call.supporting_fragment_count,
+            -call.mutant_fragment_count,
             call.itd.insertion.start,
-            call.itd.tandem_start,
-            call.itd.tandem_sequence,
+            call.itd.copied_segment_start,
+            call.itd.copied_segment_sequence,
             call.itd.spacer_prefix,
             call.itd.spacer_suffix,
             call.itd.insertion.sequence,
         ),
     )
     for call in ordered_calls:
-        key = call.canonical_allele or _legacy_itd_identity(call.itd)
-        call_representatives = representatives_by_key.get(key, [])
+        call_representatives = representatives_by_key.get(
+            call.canonical_allele,
+            [],
+        )
         sections.append(_render_html_call_section(call, call_representatives))
 
     thresholds_section = _render_html_thresholds_section(
@@ -713,7 +704,7 @@ def _write_unique_support_alignment_html_report(
         alignment_filters=alignment_filters,
         insertion_filters=insertion_filters,
         min_insert_length=min_insert_length,
-        min_tandem_length=min_tandem_length,
+        min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
     )
     sample_summary = _render_html_sample_summary(sample_result, qc_thresholds)
@@ -1001,34 +992,22 @@ def _write_unique_support_alignment_html_report(
     )
 
 
-def _legacy_itd_identity(itd) -> tuple[int, int, str, str, str, bool]:
-    """Return the former identity for manually constructed report objects."""
-    return (
-        itd.insertion.start,
-        itd.tandem_start,
-        itd.tandem_sequence,
-        itd.spacer_prefix,
-        itd.spacer_suffix,
-        itd.insertion.trailing,
-    )
-
-
 def _write_tsv_call_report(
     path: Path,
     calls: list[ITDCall],
     *,
     max_mismatches: int,
-    min_supporting_fragment_count: int,
-    min_spanning_fragment_count: int,
-    min_supporting_fragment_fraction: float,
-    max_single_direction_fraction: float = 0.90,
-    min_directional_observations: int = 5,
+    min_mutant_fragment_count: int,
+    min_informative_fragment_count: int,
+    min_mutant_fragment_fraction: float,
+    max_directional_mutant_fraction_share: float = 0.90,
+    min_directional_opportunities: int = 5,
     alignment_filters: AlignmentEvidenceFilter | None = None,
     insertion_filters: InsertionEvidenceFilter | None = None,
     sample_result: SampleResult | None = None,
     qc_thresholds: SampleQCThresholds | None = None,
     min_insert_length: int = 6,
-    min_tandem_length: int = 6,
+    min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
     reference_id: str | None = None,
     reference_length: int | None = None,
@@ -1140,32 +1119,32 @@ def _write_tsv_call_report(
                     call.itd.spacer_suffix or "-",
                     call.itd.insertion.sequence,
                     "Yes" if call.itd.is_partial_observation else "No",
-                    call.supporting_fragment_count,
-                    call.forward_support_count,
-                    call.forward_opportunity_count,
+                    call.mutant_fragment_count,
+                    call.r1_mutant_count,
+                    call.r1_opportunity_count,
                     (
-                        f"{call.forward_mutant_fraction:.6f}"
-                        if call.forward_mutant_fraction is not None
+                        f"{call.r1_mutant_fraction:.6f}"
+                        if call.r1_mutant_fraction is not None
                         else "."
                     ),
-                    call.reverse_support_count,
-                    call.reverse_opportunity_count,
+                    call.r2_mutant_count,
+                    call.r2_opportunity_count,
                     (
-                        f"{call.reverse_mutant_fraction:.6f}"
-                        if call.reverse_mutant_fraction is not None
+                        f"{call.r2_mutant_fraction:.6f}"
+                        if call.r2_mutant_fraction is not None
                         else "."
                     ),
-                    call.spanning_fragment_count,
-                    f"{call.observed_supporting_fragment_fraction:.6f}",
+                    call.informative_fragment_count,
+                    f"{call.observed_mutant_fragment_fraction:.6f}",
                     (
-                        f"{call.supporting_fragment_count}/"
-                        f"{call.spanning_fragment_count} informative fragments"
+                        f"{call.mutant_fragment_count}/"
+                        f"{call.informative_fragment_count} informative fragments"
                     ),
-                    min_supporting_fragment_count,
-                    min_spanning_fragment_count,
-                    f"{min_supporting_fragment_fraction:.6f}",
-                    f"{max_single_direction_fraction:.6f}",
-                    min_directional_observations,
+                    min_mutant_fragment_count,
+                    min_informative_fragment_count,
+                    f"{min_mutant_fragment_fraction:.6f}",
+                    f"{max_directional_mutant_fraction_share:.6f}",
+                    min_directional_opportunities,
                     (
                         f"{alignment_filters.min_identity:.6f}"
                         if alignment_filters is not None
@@ -1206,7 +1185,7 @@ def _write_tsv_call_report(
                     *_sample_tsv_values(sample_result, qc_thresholds),
                     call.concordant_fragment_count,
                     call.single_mate_fragment_count,
-                    call.discordant_fragment_count,
+                    call.conflicting_fragment_count,
                     call.unresolved_fragment_count,
                     call.wild_type_fragment_count,
                     call.not_informative_fragment_count,
@@ -1216,7 +1195,7 @@ def _write_tsv_call_report(
                     COORDINATE_CONVENTION,
                     f"immediately {call.itd.copied_segment_location} insertion",
                     min_insert_length,
-                    min_tandem_length,
+                    min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
                 ]
             )
@@ -1224,11 +1203,11 @@ def _write_tsv_call_report(
             empty_call_values: list[object] = ["."] * 35
             empty_call_values[3] = mode
             empty_call_values[4] = max_mismatches
-            empty_call_values[23] = min_supporting_fragment_count
-            empty_call_values[24] = min_spanning_fragment_count
-            empty_call_values[25] = f"{min_supporting_fragment_fraction:.6f}"
-            empty_call_values[26] = f"{max_single_direction_fraction:.6f}"
-            empty_call_values[27] = min_directional_observations
+            empty_call_values[23] = min_mutant_fragment_count
+            empty_call_values[24] = min_informative_fragment_count
+            empty_call_values[25] = f"{min_mutant_fragment_fraction:.6f}"
+            empty_call_values[26] = f"{max_directional_mutant_fraction_share:.6f}"
+            empty_call_values[27] = min_directional_opportunities
             if alignment_filters is not None:
                 empty_call_values[28] = f"{alignment_filters.min_identity:.6f}"
                 empty_call_values[29] = (
@@ -1259,7 +1238,7 @@ def _write_tsv_call_report(
                 ]
                 + [
                     min_insert_length,
-                    min_tandem_length,
+                    min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
                 ]
             )
@@ -1454,7 +1433,7 @@ def _render_html_thresholds_section(
     alignment_filters: AlignmentEvidenceFilter | None = None,
     insertion_filters: InsertionEvidenceFilter | None = None,
     min_insert_length: int = 6,
-    min_tandem_length: int = 6,
+    min_copied_segment_length: int = 6,
     require_in_frame: bool = True,
 ) -> str:
     items: list[tuple[str, str]] = []
@@ -1463,15 +1442,15 @@ def _render_html_thresholds_section(
             [
                 (
                     "Min mutant fragments",
-                    str(filters.min_supporting_fragment_count),
+                    str(filters.min_mutant_fragment_count),
                 ),
                 (
                     "Min informative fragments",
-                    str(filters.min_spanning_fragment_count),
+                    str(filters.min_informative_fragment_count),
                 ),
                 (
                     "Min mutant-fragment fraction",
-                    f"{filters.min_observed_supporting_fragment_fraction:.3%}",
+                    f"{filters.min_observed_mutant_fragment_fraction:.3%}",
                 ),
                 (
                     "Max directional mutant-fraction share",
@@ -1487,7 +1466,7 @@ def _render_html_thresholds_section(
         [
             ("Max mismatches", str(max_mismatches)),
             ("Min insert length", str(min_insert_length)),
-            ("Min copied-segment length", str(min_tandem_length)),
+            ("Min copied-segment length", str(min_copied_segment_length)),
             ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
         ]
     )
@@ -1606,15 +1585,15 @@ def _render_html_call_section(
         (
             'R1 Evidence',
             _format_directional_evidence(
-                call.forward_support_count,
-                call.forward_opportunity_count,
+                call.r1_mutant_count,
+                call.r1_opportunity_count,
             ),
         ),
         (
             'R2 Evidence',
             _format_directional_evidence(
-                call.reverse_support_count,
-                call.reverse_opportunity_count,
+                call.r2_mutant_count,
+                call.r2_opportunity_count,
             ),
         ),
         ('Concordant Fragments', str(call.concordant_fragment_count)),
@@ -1634,7 +1613,7 @@ def _render_html_call_section(
         (
             'Observed Mutant-fragment Fraction',
             (
-                f"{call.observed_supporting_fragment_fraction:.1%} "
+                f"{call.observed_mutant_fragment_fraction:.1%} "
                 f"({call.mutant_fragment_count}/"
                 f"{call.informative_fragment_count} informative fragments)"
             ),
@@ -1751,7 +1730,7 @@ def _highlight_inserted_sequence(sequence: str, itd: ITD) -> str:
     fragments: list[str] = []
     expected_sequence = _expected_insertion_sequence(itd)
     prefix_length = len(itd.spacer_prefix)
-    tandem_length = len(itd.tandem_sequence)
+    tandem_length = len(itd.copied_segment_sequence)
 
     for index, base in enumerate(sequence):
         escaped_base = html.escape(base)
@@ -1799,7 +1778,7 @@ def _reference_tandem_classes(
         css_class = None
         if ref_base != "-":
             ref_pos += 1
-            if itd.tandem_start <= ref_pos <= itd.tandem_end:
+            if itd.copied_segment_start <= ref_pos <= itd.copied_segment_end:
                 css_class = "tandem-region"
         classes.append(css_class)
 
@@ -1815,7 +1794,7 @@ def _alignment_difference_classes(
     insertion_offsets: dict[int, int] = {}
     expected_sequence = _expected_insertion_sequence(itd)
     prefix_length = len(itd.spacer_prefix)
-    tandem_length = len(itd.tandem_sequence)
+    tandem_length = len(itd.copied_segment_sequence)
 
     for read_base, ref_base in zip(
         alignment.aligned_read,
@@ -1913,4 +1892,4 @@ def _alignment_features(
 
 
 def _expected_insertion_sequence(itd: ITD) -> str:
-    return f"{itd.spacer_prefix}{itd.tandem_sequence}{itd.spacer_suffix}"
+    return f"{itd.spacer_prefix}{itd.copied_segment_sequence}{itd.spacer_suffix}"

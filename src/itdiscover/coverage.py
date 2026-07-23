@@ -1,7 +1,5 @@
 """Inter-base coverage and observed candidate-fragment fractions."""
 
-import warnings
-
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -77,38 +75,23 @@ def interbase_fragment_ids(
     }
 
 
-def observed_supporting_fragment_fraction(
-    supporting_fragment_count: int,
-    spanning_fragment_count: int,
+def observed_mutant_fragment_fraction(
+    mutant_fragment_count: int,
+    informative_fragment_count: int,
 ) -> float:
     """Return mutant fragments divided by mutant plus wild-type fragments.
 
-    The historical parameter names are retained for compatibility:
-    ``supporting_fragment_count`` is the mutant count and
-    ``spanning_fragment_count`` is the informative mutant-plus-WT count.
     Counts are post-filter and fragment-deduplicated. Zero informative evidence
     is defined as 0.0 only when there is also no mutant evidence.
     """
-    if supporting_fragment_count < 0:
-        raise ValueError("supporting_fragment_count must not be negative")
-    if spanning_fragment_count < 0:
-        raise ValueError("spanning_fragment_count must not be negative")
-    if supporting_fragment_count > spanning_fragment_count:
+    if mutant_fragment_count < 0:
+        raise ValueError("mutant_fragment_count must not be negative")
+    if informative_fragment_count < 0:
+        raise ValueError("informative_fragment_count must not be negative")
+    if mutant_fragment_count > informative_fragment_count:
         raise ValueError(
-            "supporting_fragment_count must not exceed spanning_fragment_count"
+            "mutant_fragment_count must not exceed informative_fragment_count"
         )
-    if spanning_fragment_count == 0:
+    if informative_fragment_count == 0:
         return 0.0
-    return supporting_fragment_count / spanning_fragment_count
-
-
-def variant_allele_frequency(supporting_count: int, spanning_count: int) -> float:
-    """Deprecated compatibility alias for the observed fragment fraction."""
-    warnings.warn(
-        "variant_allele_frequency() is deprecated; use "
-        "observed_supporting_fragment_fraction(). The result is not a "
-        "validated VAF or allelic ratio.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return observed_supporting_fragment_fraction(supporting_count, spanning_count)
+    return mutant_fragment_count / informative_fragment_count

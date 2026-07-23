@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from itdiscover.alleles import CanonicalInsertionAllele
 from itdiscover.calls import (
     ITDCall,
     ITDFilter,
@@ -33,9 +34,9 @@ def make_alignment(
 
 def permissive_filters() -> ITDFilter:
     return ITDFilter(
-        min_supporting_fragment_count=1,
-        min_spanning_fragment_count=0,
-        min_observed_supporting_fragment_fraction=0,
+        min_mutant_fragment_count=1,
+        min_informative_fragment_count=0,
+        min_observed_mutant_fragment_fraction=0,
     )
 
 
@@ -54,30 +55,34 @@ def make_insertion(
     )
 
 
-def test_itd_call_rejects_fraction_inconsistent_with_fragment_counts() -> None:
+def test_itd_call_rejects_invalid_fragment_counts() -> None:
     itd = ITD(
         insertion=make_insertion("read", start=2, sequence="CCCGGG"),
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
     )
 
-    with pytest.raises(ValueError, match="must equal"):
+    allele = CanonicalInsertionAllele(start=2, sequence="CCCGGG")
+
+    with pytest.raises(ValueError, match="must not be negative"):
         ITDCall(
             itd=itd,
-            supporting_fragment_count=1,
-            spanning_fragment_count=2,
-            observed_supporting_fragment_fraction=0.25,
+            canonical_allele=allele,
+            mutant_fragment_count=1,
+            wild_type_fragment_count=-1,
         )
-    with pytest.raises(ValueError, match="must equal"):
+    with pytest.raises(ValueError, match="must not exceed"):
         ITDCall(
             itd=itd,
-            supporting_fragment_count=1,
-            spanning_fragment_count=2,
-            observed_supporting_fragment_fraction=float("nan"),
+            canonical_allele=allele,
+            mutant_fragment_count=1,
+            wild_type_fragment_count=1,
+            r1_mutant_count=2,
+            r1_opportunity_count=1,
         )
 
 
-def test_call_exact_itds_reports_supporting_and_spanning_fragment_fraction() -> None:
+def test_call_exact_itds_reports_mutant_and_informative_fragment_fraction() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -106,12 +111,15 @@ def test_call_exact_itds_reports_supporting_and_spanning_fragment_fraction() -> 
                     start=8,
                     sequence="CCCGGG",
                 ),
-                tandem_start=3,
-                tandem_sequence="CCCGGG",
+                copied_segment_start=3,
+                copied_segment_sequence="CCCGGG",
             ),
-            supporting_fragment_count=3,
-            spanning_fragment_count=10,
-            observed_supporting_fragment_fraction=0.3,
+            canonical_allele=CanonicalInsertionAllele(
+                start=2,
+                sequence="CCCGGG",
+            ),
+            mutant_fragment_count=3,
+            wild_type_fragment_count=7,
         )
     ]
 
@@ -147,12 +155,12 @@ def test_call_exact_itds_counts_concordant_and_single_mate_fragments() -> None:
 
     call = call_exact_itds(alignments, reference, filters=permissive_filters())[0]
 
-    assert call.supporting_fragment_count == 2
-    assert call.spanning_fragment_count == 2
-    assert call.observed_supporting_fragment_fraction == 1
+    assert call.mutant_fragment_count == 2
+    assert call.informative_fragment_count == 2
+    assert call.observed_mutant_fragment_fraction == 1
     assert call.concordant_fragment_count == 1
     assert call.single_mate_fragment_count == 1
-    assert call.discordant_fragment_count == 0
+    assert call.conflicting_fragment_count == 0
     assert call.unresolved_fragment_count == 0
 
 
@@ -202,8 +210,8 @@ def test_low_quality_mutant_evidence_is_unresolved_not_wild_type() -> None:
     assert call.conflicting_fragment_count == 0
     assert call.unresolved_fragment_count == 1
     assert call.not_informative_fragment_count == 1
-    assert call.forward_opportunity_count == 1
-    assert call.observed_supporting_fragment_fraction == 0
+    assert call.r1_opportunity_count == 1
+    assert call.observed_mutant_fragment_fraction == 0
 
 
 def test_low_quality_wild_type_evidence_is_unresolved_not_denominator() -> None:
@@ -242,8 +250,8 @@ def test_low_quality_wild_type_evidence_is_unresolved_not_denominator() -> None:
     assert call.wild_type_fragment_count == 0
     assert call.informative_fragment_count == 1
     assert call.unresolved_fragment_count == 1
-    assert call.forward_opportunity_count == 1
-    assert call.observed_supporting_fragment_fraction == 1
+    assert call.r1_opportunity_count == 1
+    assert call.observed_mutant_fragment_fraction == 1
 
 
 def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
@@ -255,7 +263,7 @@ def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
             mutant,
             mutant,
             "AAACCCGGG------TTT",
-            fragment_id="discordant",
+            fragment_id="conflicting",
         ),
         make_alignment(
             "discordant/2",
@@ -263,16 +271,16 @@ def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
             reference,
             reference,
             direction="reverse",
-            fragment_id="discordant",
+            fragment_id="conflicting",
         ),
     ]
 
     call = call_exact_itds(alignments, reference, filters=permissive_filters())[0]
 
-    assert call.supporting_fragment_count == 0
-    assert call.spanning_fragment_count == 0
-    assert call.observed_supporting_fragment_fraction == 0
-    assert call.discordant_fragment_count == 1
+    assert call.mutant_fragment_count == 0
+    assert call.informative_fragment_count == 0
+    assert call.observed_mutant_fragment_fraction == 0
+    assert call.conflicting_fragment_count == 1
     assert call.filter_reasons == (
         "ONLY_CONFLICTING_MATE_EVIDENCE",
         "AMBIGUOUS_EVIDENCE_DOMINATES",
@@ -361,7 +369,7 @@ def test_conflicting_evidence_cannot_be_hidden_from_the_fraction() -> None:
     assert call.informative_fragment_count == 10
     assert call.conflicting_fragment_count == 97
     assert call.unresolved_fragment_count == 0
-    assert call.observed_supporting_fragment_fraction == 0.3
+    assert call.observed_mutant_fragment_fraction == 0.3
     assert call.status == "FAIL"
     assert call.filter_reasons == ("AMBIGUOUS_EVIDENCE_DOMINATES",)
 
@@ -375,7 +383,7 @@ def test_call_exact_itds_excludes_mutually_incompatible_mate_candidates() -> Non
             "AAACCCGGGCCCGGGTTTAAACCCGGG",
             "AAACCCGGGCCCGGGTTTAAACCCGGG",
             aligned_reference,
-            fragment_id="discordant",
+            fragment_id="conflicting",
         ),
         make_alignment(
             "discordant/2",
@@ -383,17 +391,17 @@ def test_call_exact_itds_excludes_mutually_incompatible_mate_candidates() -> Non
             "AAACCCGGGTTTAAATTTAAACCCGGG",
             aligned_reference,
             direction="reverse",
-            fragment_id="discordant",
+            fragment_id="conflicting",
         ),
     ]
 
     calls = call_exact_itds(alignments, reference, filters=permissive_filters())
 
     assert len(calls) == 2
-    assert {call.itd.tandem_sequence for call in calls} == {"CCCGGG", "TTTAAA"}
-    assert all(call.supporting_fragment_count == 0 for call in calls)
-    assert all(call.spanning_fragment_count == 0 for call in calls)
-    assert all(call.discordant_fragment_count == 1 for call in calls)
+    assert {call.itd.copied_segment_sequence for call in calls} == {"CCCGGG", "TTTAAA"}
+    assert all(call.mutant_fragment_count == 0 for call in calls)
+    assert all(call.informative_fragment_count == 0 for call in calls)
+    assert all(call.conflicting_fragment_count == 1 for call in calls)
     assert all(
         call.filter_reasons
         == (
@@ -428,8 +436,8 @@ def test_call_exact_itds_marks_multiple_same_mate_candidates_unresolved() -> Non
     calls = call_exact_itds(alignments, reference, filters=permissive_filters())
 
     assert len(calls) == 2
-    assert all(call.supporting_fragment_count == 0 for call in calls)
-    assert all(call.spanning_fragment_count == 0 for call in calls)
+    assert all(call.mutant_fragment_count == 0 for call in calls)
+    assert all(call.informative_fragment_count == 0 for call in calls)
     assert all(call.unresolved_fragment_count == 1 for call in calls)
     assert all(
         call.filter_reasons
@@ -470,8 +478,8 @@ def test_call_fuzzy_itds_does_not_hide_mate_sequence_disagreement() -> None:
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 0
-    assert calls[0].spanning_fragment_count == 0
+    assert calls[0].mutant_fragment_count == 0
+    assert calls[0].informative_fragment_count == 0
     assert calls[0].unresolved_fragment_count == 1
     assert calls[0].filter_reasons == (
         "ONLY_UNRESOLVED_EVIDENCE",
@@ -526,9 +534,9 @@ def test_call_exact_itds_combines_equivalent_gap_placements() -> None:
     assert calls[0].canonical_allele is not None
     assert calls[0].canonical_allele.start == 2
     assert calls[0].canonical_allele.sequence == "CCCGGG"
-    assert calls[0].supporting_fragment_count == 5
-    assert calls[0].spanning_fragment_count == 12
-    assert calls[0].observed_supporting_fragment_fraction == 5 / 12
+    assert calls[0].mutant_fragment_count == 5
+    assert calls[0].informative_fragment_count == 12
+    assert calls[0].observed_mutant_fragment_fraction == 5 / 12
     assert {
         representative.itd.insertion.start for representative in representatives
     } == {2, 8}
@@ -561,8 +569,8 @@ def test_call_exact_itds_canonical_identity_is_independent_of_input_order() -> N
     assert calls == reversed_calls
     assert len(calls) == 1
     assert calls[0].itd.insertion.start == 2
-    assert calls[0].supporting_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 1.0
+    assert calls[0].mutant_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 1.0
 
 
 def test_call_exact_itds_reconciles_equivalent_mate_gap_placements() -> None:
@@ -593,9 +601,9 @@ def test_call_exact_itds_reconciles_equivalent_mate_gap_placements() -> None:
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 1
+    assert calls[0].mutant_fragment_count == 1
     assert calls[0].concordant_fragment_count == 1
-    assert calls[0].discordant_fragment_count == 0
+    assert calls[0].conflicting_fragment_count == 0
     assert calls[0].unresolved_fragment_count == 0
 
 
@@ -617,8 +625,8 @@ def test_canonical_support_is_eligible_when_raw_read_does_not_span_canonical_gap
     assert len(calls) == 1
     assert calls[0].canonical_allele is not None
     assert calls[0].canonical_allele.start == 2
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 1
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 1
 
 
 def test_call_exact_itds_combines_all_true_flt3_gap_placements() -> None:
@@ -651,18 +659,18 @@ def test_call_exact_itds_combines_all_true_flt3_gap_placements() -> None:
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
-            max_single_direction_fraction=1,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
+            max_directional_mutant_fraction_share=1,
         ),
     )
 
     assert len(alignments) == 16
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 16
-    assert calls[0].spanning_fragment_count == 16
-    assert calls[0].observed_supporting_fragment_fraction == 1.0
+    assert calls[0].mutant_fragment_count == 16
+    assert calls[0].informative_fragment_count == 16
+    assert calls[0].observed_mutant_fragment_fraction == 1.0
     assert calls[0].canonical_allele is not None
     assert calls[0].canonical_allele.alternate_sequence(reference) == alternate
 
@@ -699,9 +707,9 @@ def test_call_exact_itds_counts_overlapping_mates_once_per_fragment() -> None:
     calls = call_exact_itds(alignments, reference)
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 1
-    assert calls[0].spanning_fragment_count == 2
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 1
+    assert calls[0].informative_fragment_count == 2
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_reports_unique_supporting_sequences() -> None:
@@ -739,9 +747,9 @@ def test_call_exact_itds_reports_unique_supporting_sequences() -> None:
     calls = call_exact_itds(alignments, reference)
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 3
-    assert calls[0].spanning_fragment_count == 6
-    assert calls[0].observed_supporting_fragment_fraction == 0.5
+    assert calls[0].mutant_fragment_count == 3
+    assert calls[0].informative_fragment_count == 6
+    assert calls[0].observed_mutant_fragment_fraction == 0.5
 
 
 def test_call_exact_itds_ignores_non_itd_insertions() -> None:
@@ -789,14 +797,14 @@ def test_call_exact_itds_marks_read_edge_itds_as_partial_observations() -> None:
         [alignment],
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
         ),
     )
 
     assert len(calls) == 1
-    assert calls[0].itd.tandem_sequence == "CCCGGG"
+    assert calls[0].itd.copied_segment_sequence == "CCCGGG"
     assert calls[0].itd.is_partial_observation
     assert calls[0].status == "FAIL"
     assert calls[0].filter_reasons == ("PARTIAL_OBSERVATION",)
@@ -816,14 +824,14 @@ def test_call_exact_itds_reconstructs_fully_observed_long_itd() -> None:
         [alignment],
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
         ),
     )
 
     assert len(calls) == 1
-    assert calls[0].itd.tandem_sequence == tandem
+    assert calls[0].itd.copied_segment_sequence == tandem
     assert calls[0].itd.length == len(tandem)
     assert not calls[0].itd.is_partial_observation
     assert calls[0].status == "PASS"
@@ -870,12 +878,12 @@ def test_lower_insert_threshold_also_allows_three_base_tandem_by_default() -> No
     )
 
     assert len(calls) == 1
-    assert calls[0].itd.tandem_sequence == "CCC"
+    assert calls[0].itd.copied_segment_sequence == "CCC"
     assert call_exact_itds(
         [alignment],
         reference,
         min_insert_length=3,
-        min_tandem_length=6,
+        min_copied_segment_length=6,
     ) == []
 
 
@@ -892,18 +900,18 @@ def test_out_of_frame_insertion_filter_is_explicitly_configurable() -> None:
         [alignment],
         reference,
         min_insert_length=4,
-        min_tandem_length=3,
+        min_copied_segment_length=3,
     ) == []
     calls = call_exact_itds(
         [alignment],
         reference,
         min_insert_length=4,
-        min_tandem_length=3,
+        min_copied_segment_length=3,
         require_in_frame=False,
     )
 
     assert len(calls) == 1
-    assert calls[0].itd.tandem_sequence == "CCC"
+    assert calls[0].itd.copied_segment_sequence == "CCC"
     assert calls[0].itd.spacer_suffix == "A"
 
 
@@ -923,9 +931,9 @@ def test_call_exact_itds_marks_call_as_fail_when_support_threshold_is_not_met() 
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=2,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
+            min_mutant_fragment_count=2,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
         ),
     )
 
@@ -952,7 +960,7 @@ def test_default_call_filters_do_not_pass_a_single_fragment_candidate() -> None:
     )
 
 
-def test_filters_on_observed_supporting_fragment_fraction() -> None:
+def test_filters_on_observed_mutant_fragment_fraction() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -970,13 +978,13 @@ def test_filters_on_observed_supporting_fragment_fraction() -> None:
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=10,
-            min_observed_supporting_fragment_fraction=0.2,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=10,
+            min_observed_mutant_fragment_fraction=0.2,
         ),
     )
 
-    assert calls[0].observed_supporting_fragment_fraction == 0.1
+    assert calls[0].observed_mutant_fragment_fraction == 0.1
     assert calls[0].filter_reasons == ("LOW_MUTANT_FRAGMENT_FRACTION",)
 
 
@@ -996,16 +1004,16 @@ def test_direction_without_junction_opportunities_does_not_create_bias() -> None
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
         ),
     )
 
-    assert calls[0].forward_support_count == 5
-    assert calls[0].reverse_support_count == 0
-    assert calls[0].forward_opportunity_count == 5
-    assert calls[0].reverse_opportunity_count == 0
+    assert calls[0].r1_mutant_count == 5
+    assert calls[0].r2_mutant_count == 0
+    assert calls[0].r1_opportunity_count == 5
+    assert calls[0].r2_opportunity_count == 0
     assert calls[0].status == "PASS"
     assert calls[0].filter_reasons == ()
 
@@ -1036,18 +1044,18 @@ def test_direction_bias_requires_opportunities_in_both_directions() -> None:
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
         ),
     )[0]
 
-    assert call.forward_support_count == 5
-    assert call.forward_opportunity_count == 5
-    assert call.forward_mutant_fraction == 1
-    assert call.reverse_support_count == 0
-    assert call.reverse_opportunity_count == 5
-    assert call.reverse_mutant_fraction == 0
+    assert call.r1_mutant_count == 5
+    assert call.r1_opportunity_count == 5
+    assert call.r1_mutant_fraction == 1
+    assert call.r2_mutant_count == 0
+    assert call.r2_opportunity_count == 5
+    assert call.r2_mutant_fraction == 0
     assert call.status == "FAIL"
     assert call.filter_reasons == ("DIRECTION_BIAS",)
 
@@ -1098,19 +1106,19 @@ def test_direction_bias_compares_rates_not_raw_support_counts() -> None:
         alignments,
         reference,
         filters=ITDFilter(
-            min_supporting_fragment_count=1,
-            min_spanning_fragment_count=0,
-            min_observed_supporting_fragment_fraction=0,
-            max_single_direction_fraction=0.7,
-            min_directional_observations=2,
+            min_mutant_fragment_count=1,
+            min_informative_fragment_count=0,
+            min_observed_mutant_fragment_fraction=0,
+            max_directional_mutant_fraction_share=0.7,
+            min_directional_opportunities=2,
         ),
     )[0]
 
-    assert call.forward_support_count == 5
-    assert call.forward_opportunity_count == 10
-    assert call.reverse_support_count == 2
-    assert call.reverse_opportunity_count == 4
-    assert call.forward_mutant_fraction == call.reverse_mutant_fraction == 0.5
+    assert call.r1_mutant_count == 5
+    assert call.r1_opportunity_count == 10
+    assert call.r2_mutant_count == 2
+    assert call.r2_opportunity_count == 4
+    assert call.r1_mutant_fraction == call.r2_mutant_fraction == 0.5
     assert call.status == "PASS"
     assert call.filter_reasons == ()
 
@@ -1143,7 +1151,7 @@ def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 2
+    assert calls[0].mutant_fragment_count == 2
     assert len(representatives) == 1
     assert representatives[0].support_count == 2
     assert representatives[0].exact_support_count == 1
@@ -1194,7 +1202,7 @@ def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches(
     )
 
     assert len(calls) == 1
-    assert calls[0].supporting_fragment_count == 3
+    assert calls[0].mutant_fragment_count == 3
     assert calls[0].itd == ITD(
         insertion=Insertion(
             read_id="exact-fragment-1/1",
@@ -1203,8 +1211,8 @@ def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches(
             sequence="TTACCCGGGACT",
             direction="forward",
         ),
-        tandem_start=3,
-        tandem_sequence="CCCGGG",
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )

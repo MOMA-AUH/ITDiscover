@@ -1,12 +1,11 @@
 """FLT3 internal tandem duplication classification."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from .insertions import Insertion
 from .sequences import validate_sequence
 
-TandemOrientation = Literal["upstream", "downstream"]
 CopiedSegmentLocation = Literal["before", "after"]
 
 
@@ -15,51 +14,19 @@ class ITD:
     """An insertion containing a copy of an adjacent reference segment."""
 
     insertion: Insertion
-    tandem_start: int
-    tandem_sequence: str
-    orientation: TandemOrientation | None = field(
-        default=None,
-        compare=False,
-        repr=False,
-    )
+    copied_segment_start: int
+    copied_segment_sequence: str
     spacer_prefix: str = ""
     spacer_suffix: str = ""
 
     def __post_init__(self) -> None:
-        expected_orientation: TandemOrientation = (
-            "upstream"
-            if self.copied_segment_location == "before"
-            else "downstream"
-        )
-        if (
-            self.orientation is not None
-            and self.orientation != expected_orientation
-        ):
-            raise ValueError(
-                "orientation is inconsistent with the copied interval and "
-                "insertion site"
-            )
-        object.__setattr__(self, "orientation", expected_orientation)
-
-    @property
-    def tandem_end(self) -> int:
-        """Return the inclusive end coordinate of the duplicated WT segment."""
-        return self.tandem_start + len(self.tandem_sequence) - 1
-
-    @property
-    def copied_segment_start(self) -> int:
-        """Return the zero-based start of the copied reference segment."""
-        return self.tandem_start
+        # Accessing the derived property validates adjacency.
+        _ = self.copied_segment_location
 
     @property
     def copied_segment_end(self) -> int:
-        """Return the inclusive end of the copied reference segment."""
-        return self.tandem_end
-
-    @property
-    def copied_segment_sequence(self) -> str:
-        """Return the reference sequence copied into the insertion."""
-        return self.tandem_sequence
+        """Return the inclusive end coordinate of the duplicated WT segment."""
+        return self.copied_segment_start + len(self.copied_segment_sequence) - 1
 
     @property
     def copied_segment_length(self) -> int:
@@ -69,16 +36,16 @@ class ITD:
     @property
     def copied_segment_location(self) -> CopiedSegmentLocation:
         """Return whether the copied interval is before or after the insertion."""
-        if self.tandem_end == self.insertion.start:
+        if self.copied_segment_end == self.insertion.start:
             return "before"
-        if self.tandem_start == self.insertion.start + 1:
+        if self.copied_segment_start == self.insertion.start + 1:
             return "after"
         raise ValueError("copied reference interval is not adjacent to insertion")
 
     @property
     def length(self) -> int:
         """Return the duplicated sequence length."""
-        return len(self.tandem_sequence)
+        return len(self.copied_segment_sequence)
 
     @property
     def spacer_sequence(self) -> str:
@@ -106,29 +73,29 @@ class TandemSimilarity:
     """Similarity between an inserted sequence and a WT tandem window."""
 
     insertion: Insertion
-    tandem_start: int
-    tandem_sequence: str
+    copied_segment_start: int
+    copied_segment_sequence: str
     mismatches: int
 
     @property
     def matches(self) -> int:
         """Return the number of matching bases in the best window."""
-        return len(self.tandem_sequence) - self.mismatches
+        return len(self.copied_segment_sequence) - self.mismatches
 
     @property
     def identity(self) -> float:
         """Return the fraction of matching bases in the best window."""
-        if not self.tandem_sequence:
+        if not self.copied_segment_sequence:
             return 0.0
-        return self.matches / len(self.tandem_sequence)
+        return self.matches / len(self.copied_segment_sequence)
 
 
 @dataclass(frozen=True)
 class _TandemMatch:
     insertion_start: int
     insertion_end: int
-    tandem_start: int
-    tandem_sequence: str
+    copied_segment_start: int
+    copied_segment_sequence: str
     mismatches: int
 
 
@@ -136,7 +103,7 @@ def classify_exact_itd(
     insertion: Insertion,
     reference: str,
     *,
-    min_tandem_length: int = 6,
+    min_copied_segment_length: int = 6,
 ) -> ITD | None:
     """Classify an insertion as an adjacent exact tandem duplication.
 
@@ -148,7 +115,7 @@ def classify_exact_itd(
         insertion,
         reference,
         max_mismatches=0,
-        min_tandem_length=min_tandem_length,
+        min_copied_segment_length=min_copied_segment_length,
     )
 
 
@@ -163,8 +130,8 @@ def score_tandem_similarity(
         return None
     return TandemSimilarity(
         insertion=insertion,
-        tandem_start=match.tandem_start,
-        tandem_sequence=match.tandem_sequence,
+        copied_segment_start=match.copied_segment_start,
+        copied_segment_sequence=match.copied_segment_sequence,
         mismatches=match.mismatches,
     )
 
@@ -174,20 +141,20 @@ def classify_fuzzy_itd(
     reference: str,
     *,
     max_mismatches: int,
-    min_tandem_length: int = 6,
+    min_copied_segment_length: int = 6,
 ) -> ITD | None:
     """Classify an insertion as a fuzzy-match tandem duplication with spacers."""
     if max_mismatches < 0:
         raise ValueError("max_mismatches must not be negative")
-    if min_tandem_length < 1:
-        raise ValueError("min_tandem_length must be at least 1")
+    if min_copied_segment_length < 1:
+        raise ValueError("min_copied_segment_length must be at least 1")
 
     _validate_reference(reference)
     match = _best_adjacent_copied_match(
         insertion,
         reference,
         max_mismatches=max_mismatches,
-        min_copied_length=min_tandem_length,
+        min_copied_length=min_copied_segment_length,
     )
     if match is None:
         return None
@@ -218,24 +185,30 @@ def _best_adjacent_copied_match(
             if copied_length < min_copied_length or copied_length > len(reference):
                 continue
             observed = sequence[insertion_start:insertion_end]
-            for tandem_start in _adjacent_tandem_starts(insertion.start, copied_length):
-                if tandem_start < 0 or tandem_start + copied_length > len(reference):
+            for copied_segment_start in _adjacent_copied_segment_starts(
+                insertion.start,
+                copied_length,
+            ):
+                if (
+                    copied_segment_start < 0
+                    or copied_segment_start + copied_length > len(reference)
+                ):
                     continue
                 tandem_reference = reference[
-                    tandem_start : tandem_start + copied_length
+                    copied_segment_start : copied_segment_start + copied_length
                 ]
                 mismatches = _mismatch_count(observed, tandem_reference)
                 if mismatches > max_mismatches:
                     continue
                 matches = copied_length - mismatches
-                key = (-matches, mismatches, tandem_start, insertion_start)
+                key = (-matches, mismatches, copied_segment_start, insertion_start)
                 if best_key is None or key < best_key:
                     best_key = key
                     best_match = _TandemMatch(
                         insertion_start=insertion_start,
                         insertion_end=insertion_end,
-                        tandem_start=tandem_start,
-                        tandem_sequence=tandem_reference,
+                        copied_segment_start=copied_segment_start,
+                        copied_segment_sequence=tandem_reference,
                         mismatches=mismatches,
                     )
 
@@ -255,24 +228,29 @@ def _best_fuzzy_tandem_match(
     if len(sequence) > len(reference):
         return None
 
-    for tandem_start in range(len(reference) - len(sequence) + 1):
-        tandem_sequence = reference[tandem_start : tandem_start + len(sequence)]
-        mismatches = _mismatch_count(sequence, tandem_sequence)
-        key = (mismatches, tandem_start)
+    for copied_segment_start in range(len(reference) - len(sequence) + 1):
+        copied_segment_sequence = reference[
+            copied_segment_start : copied_segment_start + len(sequence)
+        ]
+        mismatches = _mismatch_count(sequence, copied_segment_sequence)
+        key = (mismatches, copied_segment_start)
         if best_match is None or best_key is None or key < best_key:
             best_key = key
             best_match = _TandemMatch(
                 insertion_start=0,
                 insertion_end=len(sequence),
-                tandem_start=tandem_start,
-                tandem_sequence=tandem_sequence,
+                copied_segment_start=copied_segment_start,
+                copied_segment_sequence=copied_segment_sequence,
                 mismatches=mismatches,
             )
 
     return best_match
 
 
-def _adjacent_tandem_starts(insertion_start: int, copied_length: int) -> tuple[int, int]:
+def _adjacent_copied_segment_starts(
+    insertion_start: int,
+    copied_length: int,
+) -> tuple[int, int]:
     return (
         insertion_start - copied_length + 1,
         insertion_start + 1,
@@ -282,8 +260,8 @@ def _adjacent_tandem_starts(insertion_start: int, copied_length: int) -> tuple[i
 def _itd_from_match(insertion: Insertion, match: _TandemMatch) -> ITD:
     return ITD(
         insertion=insertion,
-        tandem_start=match.tandem_start,
-        tandem_sequence=match.tandem_sequence,
+        copied_segment_start=match.copied_segment_start,
+        copied_segment_sequence=match.copied_segment_sequence,
         spacer_prefix=insertion.sequence[: match.insertion_start],
         spacer_suffix=insertion.sequence[match.insertion_end :],
     )

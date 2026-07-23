@@ -169,10 +169,9 @@ the insertion. These coordinates and bases come from
 
 `--min-insert-length` controls the shortest observed insertion considered.
 `--min-copied-segment-length` independently controls the shortest copied
-adjacent reference segment accepted as an ITD. The legacy
-`--min-tandem-length` spelling remains accepted. When omitted, the copied
-segment minimum follows the insertion minimum, so `--min-insert-length 3` can
-call a genuine 3-base duplication instead of retaining a hidden 6-base floor.
+adjacent reference segment accepted as an ITD. When omitted, the copied segment
+minimum follows the insertion minimum, so `--min-insert-length 3` can call a
+genuine 3-base duplication instead of retaining a hidden 6-base floor.
 
 Fully observed insertions are required to have total inserted length divisible
 by three by default. This narrow FLT3-ITD policy is explicit and can be disabled

@@ -4,9 +4,8 @@ from itdiscover.coverage import (
     covered_reference_positions,
     interbase_coverage,
     interbase_fragment_ids,
-    observed_supporting_fragment_fraction,
+    observed_mutant_fragment_fraction,
     spans_insertion_site,
-    variant_allele_frequency,
 )
 from itdiscover.insertions import Alignment
 
@@ -150,23 +149,18 @@ def test_spans_insertion_site_rejects_out_of_range_site() -> None:
         spans_insertion_site(alignment, 3)
 
 
-def test_observed_supporting_fragment_fraction_returns_fraction() -> None:
-    assert observed_supporting_fragment_fraction(2, 8) == 0.25
-    assert observed_supporting_fragment_fraction(0, 8) == 0.0
-    assert observed_supporting_fragment_fraction(0, 0) == 0.0
+def test_observed_mutant_fragment_fraction_returns_fraction() -> None:
+    assert observed_mutant_fragment_fraction(2, 8) == 0.25
+    assert observed_mutant_fragment_fraction(0, 8) == 0.0
+    assert observed_mutant_fragment_fraction(0, 0) == 0.0
 
 
-def test_observed_supporting_fragment_fraction_rejects_impossible_counts() -> None:
+def test_observed_mutant_fragment_fraction_rejects_impossible_counts() -> None:
     with pytest.raises(ValueError, match="must not be negative"):
-        observed_supporting_fragment_fraction(-1, 10)
+        observed_mutant_fragment_fraction(-1, 10)
     with pytest.raises(ValueError, match="must not be negative"):
-        observed_supporting_fragment_fraction(1, -10)
+        observed_mutant_fragment_fraction(1, -10)
     with pytest.raises(ValueError, match="must not exceed"):
-        observed_supporting_fragment_fraction(11, 10)
+        observed_mutant_fragment_fraction(11, 10)
     with pytest.raises(ValueError, match="must not exceed"):
-        observed_supporting_fragment_fraction(1, 0)
-
-
-def test_variant_allele_frequency_compatibility_alias_is_deprecated() -> None:
-    with pytest.deprecated_call(match="not a validated VAF"):
-        assert variant_allele_frequency(2, 8) == 0.25
+        observed_mutant_fragment_fraction(1, 0)
