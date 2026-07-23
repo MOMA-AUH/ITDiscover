@@ -66,7 +66,7 @@ def call_fuzzy_itds_from_fragments(
     fragments: Iterable[Fragment],
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_read_length: int = 100,
     min_mean_quality: float = 30,
     min_insert_length: int = 6,
@@ -103,7 +103,7 @@ def call_fuzzy_itds_from_fragments(
     return call_fuzzy_itds(
         alignments,
         reference,
-        max_mismatches=max_mismatches,
+        max_copy_mismatch_rate=max_copy_mismatch_rate,
         min_insert_length=min_insert_length,
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,

@@ -101,16 +101,17 @@ fragment is counted only once.
 Weak sequence-error variants can optionally be consolidated into a dominant
 ITD allele with `--consolidate-minor-itd-variants`. Consolidation is disabled
 by default because it changes reported allele identity. ITD detection occurs
-first: `--max-copy-mismatches` controls only how many mismatches are allowed
-between the copied segment and the reference. Consolidation is a separate,
-advanced second step that compares already-detected alleles. A minor allele is
-assigned directly to one uniquely best-supported anchor only when:
+first: `--max-copy-mismatch-rate` controls the maximum copied-segment
+mismatches divided by copied-segment length (default 0, exact matching).
+Consolidation is a separate, advanced second step that compares
+already-detected alleles. A minor allele is assigned directly to one uniquely
+best-supported anchor only when:
 
 - both alleles are fully observed and have the same insertion length;
-- their complete ALT sequences differ by no more than
-  `--consolidation-max-allele-mismatches` positional mismatches (default 1);
-- their breakpoints differ by no more than
-  `--consolidation-max-breakpoint-shift` bases (default 6);
+- their complete ALT positional mismatch count divided by insertion length is
+  no more than `--consolidation-max-allele-mismatch-rate` (default 0.125);
+- their absolute breakpoint shift divided by insertion length is no more than
+  `--consolidation-max-breakpoint-shift-rate` (default 1);
 - the anchor has at least
   `--consolidation-min-anchor-fragment-count` evidence-passing raw supporting
   fragments
@@ -121,9 +122,10 @@ assigned directly to one uniquely best-supported anchor only when:
 Assignments are never chained through another minor allele. Fragment and mate
 consensus is recalculated after assignment, so a fragment is still counted at
 most once. HTML and TSV reports record the settings and list every absorbed
-allele with its evidence-passing raw fragment support, sequence distance,
-breakpoint shift, and reason. This makes aggressive exploratory settings
-auditable rather than silently hiding minor observations.
+allele with its evidence-passing raw fragment support, raw sequence mismatch
+count and rate, raw breakpoint shift and rate, and reason. This makes
+aggressive exploratory settings auditable rather than silently hiding minor
+observations.
 
 R1/R2 direction bias is evaluated using observation opportunities rather than
 raw mutant counts. For each direction, an opportunity is a read that covers the

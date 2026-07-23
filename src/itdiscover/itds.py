@@ -114,7 +114,7 @@ def classify_exact_itd(
     return classify_fuzzy_itd(
         insertion,
         reference,
-        max_mismatches=0,
+        max_copy_mismatch_rate=0,
         min_copied_segment_length=min_copied_segment_length,
     )
 
@@ -140,12 +140,12 @@ def classify_fuzzy_itd(
     insertion: Insertion,
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_copied_segment_length: int = 6,
 ) -> ITD | None:
     """Classify an insertion as a fuzzy-match tandem duplication with spacers."""
-    if max_mismatches < 0:
-        raise ValueError("max_mismatches must not be negative")
+    if not 0 <= max_copy_mismatch_rate <= 1:
+        raise ValueError("max_copy_mismatch_rate must be between 0 and 1")
     if min_copied_segment_length < 1:
         raise ValueError("min_copied_segment_length must be at least 1")
 
@@ -153,7 +153,7 @@ def classify_fuzzy_itd(
     match = _best_adjacent_copied_match(
         insertion,
         reference,
-        max_mismatches=max_mismatches,
+        max_copy_mismatch_rate=max_copy_mismatch_rate,
         min_copied_length=min_copied_segment_length,
     )
     if match is None:
@@ -169,7 +169,7 @@ def _best_adjacent_copied_match(
     insertion: Insertion,
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_copied_length: int,
 ) -> _TandemMatch | None:
     sequence = insertion.sequence
@@ -198,7 +198,7 @@ def _best_adjacent_copied_match(
                     copied_segment_start : copied_segment_start + copied_length
                 ]
                 mismatches = _mismatch_count(observed, tandem_reference)
-                if mismatches > max_mismatches:
+                if mismatches > copied_length * max_copy_mismatch_rate:
                     continue
                 matches = copied_length - mismatches
                 key = (-matches, mismatches, copied_segment_start, insertion_start)

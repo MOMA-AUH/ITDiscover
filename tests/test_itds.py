@@ -148,7 +148,7 @@ def test_exact_classification_matches_zero_mismatch_fuzzy_classification() -> No
     assert classify_exact_itd(insertion, reference) == classify_fuzzy_itd(
         insertion,
         reference,
-        max_mismatches=0,
+        max_copy_mismatch_rate=0,
     )
 
 
@@ -294,11 +294,44 @@ def test_classifies_fuzzy_copy_after_insertion_with_one_mismatch() -> None:
     assert classify_fuzzy_itd(
         insertion,
         "AAACCCGGGTTT",
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
     ) == ITD(
         insertion=insertion,
         copied_segment_start=3,
         copied_segment_sequence="CCCGGG",
+    )
+
+
+def test_copy_mismatch_rate_scales_with_copied_segment_length() -> None:
+    short_insertion = Insertion(
+        read_id="short",
+        start=2,
+        sequence="CCCAGG",
+        direction="forward",
+    )
+    long_insertion = Insertion(
+        read_id="long",
+        start=2,
+        sequence="CCCGATTT",
+        direction="forward",
+    )
+
+    assert (
+        classify_fuzzy_itd(
+            short_insertion,
+            "AAACCCGGGTTT",
+            max_copy_mismatch_rate=0.125,
+        )
+        is None
+    )
+    assert classify_fuzzy_itd(
+        long_insertion,
+        "AAACCCGGTTTT",
+        max_copy_mismatch_rate=0.125,
+    ) == ITD(
+        insertion=long_insertion,
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGTTT",
     )
 
 
@@ -313,7 +346,7 @@ def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
     assert classify_fuzzy_itd(
         insertion,
         "AAACCCGGGTTT",
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
     ) == ITD(
         insertion=insertion,
         copied_segment_start=3,
@@ -334,7 +367,7 @@ def test_does_not_classify_fuzzy_itd_when_mismatches_exceed_threshold() -> None:
     assert classify_fuzzy_itd(
         insertion,
         "AAACCCGGGTTT",
-        max_mismatches=0,
+        max_copy_mismatch_rate=0,
     ) is None
 
 
@@ -346,7 +379,14 @@ def test_does_not_classify_fuzzy_itd_for_sequences_without_a_close_match() -> No
         direction="forward",
     )
 
-    assert classify_fuzzy_itd(insertion, "AAACCCGGGTTT", max_mismatches=3) is None
+    assert (
+        classify_fuzzy_itd(
+            insertion,
+            "AAACCCGGGTTT",
+            max_copy_mismatch_rate=0.5,
+        )
+        is None
+    )
 
 
 def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
@@ -357,7 +397,11 @@ def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
         direction="forward",
     )
 
-    assert classify_fuzzy_itd(insertion, "AAAAAAA", max_mismatches=1) == ITD(
+    assert classify_fuzzy_itd(
+        insertion,
+        "AAAAAAA",
+        max_copy_mismatch_rate=1 / 6,
+    ) == ITD(
         insertion=insertion,
         copied_segment_start=0,
         copied_segment_sequence="AAAAAA",
@@ -375,7 +419,7 @@ def test_classifies_fuzzy_tandem_with_spacers_and_mismatch_in_copied_segment() -
     assert classify_fuzzy_itd(
         insertion,
         "AAACCCGGGTTT",
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
     ) == ITD(
         insertion=insertion,
         copied_segment_start=3,
@@ -385,7 +429,10 @@ def test_classifies_fuzzy_tandem_with_spacers_and_mismatch_in_copied_segment() -
     )
 
 
-def test_classify_fuzzy_itd_rejects_negative_mismatch_threshold() -> None:
+@pytest.mark.parametrize("invalid_rate", [-0.01, 1.01])
+def test_classify_fuzzy_itd_rejects_invalid_mismatch_rate(
+    invalid_rate: float,
+) -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
@@ -393,8 +440,15 @@ def test_classify_fuzzy_itd_rejects_negative_mismatch_threshold() -> None:
         direction="forward",
     )
 
-    with pytest.raises(ValueError, match="max_mismatches must not be negative"):
-        classify_fuzzy_itd(insertion, "AAACCCGGGTTT", max_mismatches=-1)
+    with pytest.raises(
+        ValueError,
+        match="max_copy_mismatch_rate must be between 0 and 1",
+    ):
+        classify_fuzzy_itd(
+            insertion,
+            "AAACCCGGGTTT",
+            max_copy_mismatch_rate=invalid_rate,
+        )
 
 
 def test_minimum_tandem_length_is_configurable_for_three_base_duplication() -> None:

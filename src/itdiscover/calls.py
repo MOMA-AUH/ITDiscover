@@ -139,16 +139,20 @@ class ITDConsolidationSettings:
     """Safeguards for merging weak observations into a dominant ITD allele."""
 
     enabled: bool = False
-    max_allele_mismatches: int = 1
-    max_breakpoint_shift: int = 6
+    max_allele_mismatch_rate: float = 0.125
+    max_breakpoint_shift_rate: float = 1.0
     max_minor_to_anchor_support_ratio: float = 0.05
     min_anchor_fragment_count: int = 3
 
     def __post_init__(self) -> None:
-        if self.max_allele_mismatches < 0:
-            raise ValueError("max_allele_mismatches must not be negative")
-        if self.max_breakpoint_shift < 0:
-            raise ValueError("max_breakpoint_shift must not be negative")
+        if not 0 <= self.max_allele_mismatch_rate <= 1:
+            raise ValueError(
+                "max_allele_mismatch_rate must be between 0 and 1"
+            )
+        if not 0 <= self.max_breakpoint_shift_rate <= 1:
+            raise ValueError(
+                "max_breakpoint_shift_rate must be between 0 and 1"
+            )
         if not 0 <= self.max_minor_to_anchor_support_ratio <= 1:
             raise ValueError(
                 "max_minor_to_anchor_support_ratio must be between 0 and 1"
@@ -164,7 +168,9 @@ class ConsolidatedAlleleMember:
     allele: CanonicalInsertionAllele
     fragment_count: int
     allele_mismatches: int
+    allele_mismatch_rate: float
     breakpoint_shift: int
+    breakpoint_shift_rate: float
     reason: str
 
 
@@ -255,7 +261,7 @@ def call_fuzzy_itds(
     alignments: Iterable[Alignment],
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_insert_length: int = 6,
     min_copied_segment_length: int | None = None,
     require_in_frame: bool = True,
@@ -264,12 +270,12 @@ def call_fuzzy_itds(
     consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> list[ITDCall]:
     """Call fuzzy-match ITDs and attach fragment counts and observed fraction."""
-    if max_mismatches < 0:
-        raise ValueError("max_mismatches must not be negative")
+    if not 0 <= max_copy_mismatch_rate <= 1:
+        raise ValueError("max_copy_mismatch_rate must be between 0 and 1")
     calls, _ = call_fuzzy_itds_with_representatives(
         alignments,
         reference,
-        max_mismatches=max_mismatches,
+        max_copy_mismatch_rate=max_copy_mismatch_rate,
         min_insert_length=min_insert_length,
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
@@ -284,7 +290,7 @@ def call_fuzzy_itds_with_representatives(
     alignments: Iterable[Alignment],
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_insert_length: int = 6,
     min_copied_segment_length: int | None = None,
     require_in_frame: bool = True,
@@ -293,8 +299,8 @@ def call_fuzzy_itds_with_representatives(
     consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
 ) -> tuple[list[ITDCall], list[UniqueSupportRepresentative]]:
     """Call fuzzy-match ITDs and retain one alignment per unique support pattern."""
-    if max_mismatches < 0:
-        raise ValueError("max_mismatches must not be negative")
+    if not 0 <= max_copy_mismatch_rate <= 1:
+        raise ValueError("max_copy_mismatch_rate must be between 0 and 1")
     min_copied_segment_length = _resolved_min_copied_segment_length(
         min_insert_length,
         min_copied_segment_length,
@@ -308,7 +314,7 @@ def call_fuzzy_itds_with_representatives(
     ) = _collect_fuzzy_itd_support(
         alignments,
         reference,
-        max_mismatches=max_mismatches,
+        max_copy_mismatch_rate=max_copy_mismatch_rate,
         min_insert_length=min_insert_length,
         min_copied_segment_length=min_copied_segment_length,
         require_in_frame=require_in_frame,
@@ -699,7 +705,7 @@ def _collect_fuzzy_itd_support(
     alignments: Iterable[Alignment],
     reference: str,
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_insert_length: int,
     min_copied_segment_length: int,
     require_in_frame: bool,
@@ -750,7 +756,7 @@ def _collect_fuzzy_itd_support(
             itd = classify_fuzzy_itd(
                 insertion,
                 reference,
-                max_mismatches=max_mismatches,
+                max_copy_mismatch_rate=max_copy_mismatch_rate,
                 min_copied_segment_length=min_copied_segment_length,
             )
             if itd is None:
@@ -941,13 +947,25 @@ def _consolidate_observations(
         ):
             rank, anchor = compatible[0]
             assignment[key] = anchor
-            allele_mismatches, breakpoint_shift, _ = rank
+            (
+                allele_mismatch_rate,
+                breakpoint_shift_rate,
+                _,
+            ) = rank
+            allele_mismatches = _alternate_sequence_mismatches(
+                key,
+                anchor,
+                reference,
+            )
+            breakpoint_shift = abs(key.start - anchor.start)
             member_details[anchor].append(
                 ConsolidatedAlleleMember(
                     allele=key,
                     fragment_count=support_by_key[key],
                     allele_mismatches=allele_mismatches,
+                    allele_mismatch_rate=allele_mismatch_rate,
                     breakpoint_shift=breakpoint_shift,
+                    breakpoint_shift_rate=breakpoint_shift_rate,
                     reason=(
                         "same-breakpoint sequence error"
                         if breakpoint_shift == 0
@@ -979,8 +997,8 @@ def _consolidate_observations(
             sorted(
                 members,
                 key=lambda member: (
-                    member.allele_mismatches,
-                    member.breakpoint_shift,
+                    member.allele_mismatch_rate,
+                    member.breakpoint_shift_rate,
                     -member.fragment_count,
                     member.allele,
                 ),
@@ -1006,8 +1024,12 @@ def _can_consolidate_allele(
         return False
     if len(minor.sequence) != len(anchor.sequence):
         return False
+    allele_length = len(minor.sequence)
     breakpoint_shift = abs(minor.start - anchor.start)
-    if breakpoint_shift > settings.max_breakpoint_shift:
+    if (
+        breakpoint_shift / allele_length
+        > settings.max_breakpoint_shift_rate
+    ):
         return False
     if anchor_support < settings.min_anchor_fragment_count:
         return False
@@ -1017,7 +1039,8 @@ def _can_consolidate_allele(
         return False
     return (
         _alternate_sequence_mismatches(minor, anchor, reference)
-        <= settings.max_allele_mismatches
+        / allele_length
+        <= settings.max_allele_mismatch_rate
     )
 
 
@@ -1026,10 +1049,12 @@ def _consolidation_rank(
     anchor: ITDCallKey,
     anchor_support: int,
     reference: str,
-) -> tuple[int, int, int]:
+) -> tuple[float, float, int]:
+    allele_length = len(minor.sequence)
     return (
-        _alternate_sequence_mismatches(minor, anchor, reference),
-        abs(minor.start - anchor.start),
+        _alternate_sequence_mismatches(minor, anchor, reference)
+        / allele_length,
+        abs(minor.start - anchor.start) / allele_length,
         -anchor_support,
     )
 

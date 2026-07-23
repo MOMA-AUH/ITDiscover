@@ -14,10 +14,11 @@ Fragments:
   exact-itd-1,4,5     = exact 15 bp ITD copied from zero-based reference
                         positions 79-93.
   fuzzy-itd-1         = 6 bp insertion with one mismatch in the copied segment;
-                        it should appear with `--max-copy-mismatches 1`.
+                        it should appear with
+                        `--max-copy-mismatch-rate 0.166667`.
   fuzzy-itd-2         = 6 bp insertion with two mismatches in the copied
                         segment; it should only appear with
-                        `--max-copy-mismatches 2`.
+                        `--max-copy-mismatch-rate 0.333334`.
   spacer-itd-1..2     = insertion with a 10 bp copied segment from reference
                         positions 79-88 and spacers of three bases on the left
                         and two on the right (AAA + copied segment + TT).

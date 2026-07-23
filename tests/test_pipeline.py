@@ -244,7 +244,7 @@ def test_call_fuzzy_itds_from_fragments_reports_observed_fragment_fraction() -> 
     assert call_fuzzy_itds_from_fragments(
         fragments,
         reference,
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
         min_read_length=12,
         min_mean_quality=30,
     ) == [
@@ -285,7 +285,7 @@ def test_call_fuzzy_itds_from_fragments_rejects_itds_over_threshold() -> None:
         call_fuzzy_itds_from_fragments(
             fragments,
             reference,
-            max_mismatches=0,
+            max_copy_mismatch_rate=0,
             min_read_length=12,
             min_mean_quality=30,
         )
@@ -320,10 +320,13 @@ def test_fragment_pipeline_propagates_short_out_of_frame_event_policy() -> None:
     assert calls[0].itd.copied_segment_sequence == "CCC"
 
 
-def test_call_fuzzy_itds_from_fragments_rejects_negative_mismatch_threshold() -> None:
-    with pytest.raises(ValueError, match="max_mismatches must not be negative"):
+def test_call_fuzzy_itds_from_fragments_rejects_invalid_mismatch_rate() -> None:
+    with pytest.raises(
+        ValueError,
+        match="max_copy_mismatch_rate must be between 0 and 1",
+    ):
         call_fuzzy_itds_from_fragments(
             [],
             "AAACCCGGGTTT",
-            max_mismatches=-1,
+            max_copy_mismatch_rate=-0.01,
         )

@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="itdiscover",
         description="Discover FLT3 ITDs from amplicon sequencing of AML samples.",
         formatter_class=OptionalDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--version",
@@ -148,12 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--max-copy-mismatches",
-        dest="max_copy_mismatches",
-        type=_non_negative_int,
+        "--max-copy-mismatch-rate",
+        type=_fraction,
+        default=0.0,
         help=(
-            "Maximum mismatches allowed in the copied reference segment; "
-            "0 is equivalent to exact mode. ITD detection happens before any "
+            "Maximum copied-segment mismatches divided by copied-segment "
+            "length; 0 is exact mode. ITD detection happens before any "
             "optional minor-allele consolidation."
         ),
     )
@@ -170,21 +171,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     consolidation_group.add_argument(
-        "--consolidation-max-allele-mismatches",
-        dest="consolidation_max_allele_mismatches",
-        type=_non_negative_int,
-        default=1,
+        "--consolidation-max-allele-mismatch-rate",
+        type=_fraction,
+        default=0.125,
         help=(
-            "Maximum positional mismatches between the complete ALT sequences "
-            "of an already-detected minor allele and its anchor. This advanced "
-            "setting does not affect whether an insertion qualifies as an ITD."
+            "Maximum complete-ALT positional mismatches divided by insertion "
+            "length for an already-detected minor allele and its anchor. This "
+            "does not affect whether an insertion qualifies as an ITD."
         ),
     )
     consolidation_group.add_argument(
-        "--consolidation-max-breakpoint-shift",
-        type=_non_negative_int,
-        default=6,
-        help="Maximum reference-base shift between minor and anchor breakpoints.",
+        "--consolidation-max-breakpoint-shift-rate",
+        type=_fraction,
+        default=1.0,
+        help=(
+            "Maximum absolute breakpoint shift divided by insertion length "
+            "between a minor allele and its anchor."
+        ),
     )
     consolidation_group.add_argument(
         "--consolidation-max-minor-support-ratio",
@@ -407,7 +410,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
         if args.min_copied_segment_length is None
         else args.min_copied_segment_length
     )
-    if args.max_copy_mismatches is None:
+    if args.max_copy_mismatch_rate == 0:
         calls, representatives = call_exact_itds_with_representatives(
             alignments,
             reference,
@@ -422,7 +425,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
         calls, representatives = call_fuzzy_itds_with_representatives(
             alignments,
             reference,
-            max_mismatches=args.max_copy_mismatches,
+            max_copy_mismatch_rate=args.max_copy_mismatch_rate,
             min_insert_length=args.min_insert_length,
             min_copied_segment_length=min_copied_segment_length,
             require_in_frame=args.require_in_frame,
@@ -444,11 +447,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             calls,
             representatives,
             filters=filters,
-            max_mismatches=(
-                0
-                if args.max_copy_mismatches is None
-                else args.max_copy_mismatches
-            ),
+            max_copy_mismatch_rate=args.max_copy_mismatch_rate,
             alignment_filters=alignment_filters,
             insertion_filters=insertion_filters,
             sample_result=sample_result,
@@ -465,11 +464,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
         _write_tsv_call_report(
             args.output_tsv,
             calls,
-            max_mismatches=(
-                0
-                if args.max_copy_mismatches is None
-                else args.max_copy_mismatches
-            ),
+            max_copy_mismatch_rate=args.max_copy_mismatch_rate,
             min_mutant_fragment_count=filters.min_mutant_fragment_count,
             min_informative_fragment_count=filters.min_informative_fragment_count,
             min_mutant_fragment_fraction=(
@@ -548,8 +543,12 @@ def _build_consolidation_settings(
 ) -> ITDConsolidationSettings:
     return ITDConsolidationSettings(
         enabled=args.consolidate_minor_itd_variants,
-        max_allele_mismatches=args.consolidation_max_allele_mismatches,
-        max_breakpoint_shift=args.consolidation_max_breakpoint_shift,
+        max_allele_mismatch_rate=(
+            args.consolidation_max_allele_mismatch_rate
+        ),
+        max_breakpoint_shift_rate=(
+            args.consolidation_max_breakpoint_shift_rate
+        ),
         max_minor_to_anchor_support_ratio=(
             args.consolidation_max_minor_support_ratio
         ),
@@ -596,11 +595,7 @@ def _write_analysis_error_reports(
                 args.output,
                 [],
                 [],
-                max_mismatches=(
-                    0
-                    if args.max_copy_mismatches is None
-                    else args.max_copy_mismatches
-                ),
+                max_copy_mismatch_rate=args.max_copy_mismatch_rate,
                 sample_result=result,
                 qc_thresholds=qc_thresholds,
                 min_insert_length=args.min_insert_length,
@@ -622,11 +617,7 @@ def _write_analysis_error_reports(
             _write_tsv_call_report(
                 args.output_tsv,
                 [],
-                max_mismatches=(
-                    0
-                    if args.max_copy_mismatches is None
-                    else args.max_copy_mismatches
-                ),
+                max_copy_mismatch_rate=args.max_copy_mismatch_rate,
                 min_mutant_fragment_count=args.min_mutant_fragment_count,
                 min_informative_fragment_count=args.min_informative_fragment_count,
                 min_mutant_fragment_fraction=(
@@ -663,7 +654,9 @@ def _format_consolidated_members(call: ITDCall) -> str:
             f"sequence={member.allele.sequence},"
             f"fragments={member.fragment_count},"
             f"allele_mismatches={member.allele_mismatches},"
+            f"allele_mismatch_rate={member.allele_mismatch_rate:.6f},"
             f"breakpoint_shift={member.breakpoint_shift},"
+            f"breakpoint_shift_rate={member.breakpoint_shift_rate:.6f},"
             f"reason={member.reason}"
         )
         for member in call.consolidated_members
@@ -748,7 +741,7 @@ def _write_unique_support_alignment_html_report(
     representatives: list[UniqueSupportRepresentative],
     *,
     filters: ITDFilter | None = None,
-    max_mismatches: int | None = None,
+    max_copy_mismatch_rate: float = 0.0,
     alignment_filters: AlignmentEvidenceFilter | None = None,
     insertion_filters: InsertionEvidenceFilter | None = None,
     sample_result: SampleResult | None = None,
@@ -790,7 +783,7 @@ def _write_unique_support_alignment_html_report(
 
     thresholds_section = _render_html_thresholds_section(
         filters=filters,
-        max_mismatches=max_mismatches,
+        max_copy_mismatch_rate=max_copy_mismatch_rate,
         alignment_filters=alignment_filters,
         insertion_filters=insertion_filters,
         min_insert_length=min_insert_length,
@@ -1087,7 +1080,7 @@ def _write_tsv_call_report(
     path: Path,
     calls: list[ITDCall],
     *,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     min_mutant_fragment_count: int,
     min_informative_fragment_count: int,
     min_mutant_fragment_fraction: float,
@@ -1114,7 +1107,7 @@ def _write_tsv_call_report(
                 "Status",
                 "Filter Reasons",
                 "Mode",
-                "Max Mismatches",
+                "Max Copy Mismatch Rate",
                 "Insertion After Reference Base (0-based; -1=before first)",
                 "Copied Segment Start (0-based)",
                 "Copied Segment End (0-based, inclusive)",
@@ -1192,8 +1185,8 @@ def _write_tsv_call_report(
                 "Min Copied Segment Length",
                 "Require In-frame Insertions",
                 "Minor-variant Consolidation Enabled",
-                "Consolidation Max Allele Mismatches",
-                "Consolidation Max Breakpoint Shift",
+                "Consolidation Max Allele Mismatch Rate",
+                "Consolidation Max Breakpoint Shift Rate",
                 "Consolidation Max Minor/Anchor Support Ratio",
                 "Consolidation Min Anchor Fragment Count",
                 "Consolidated Minor Allele Count",
@@ -1201,7 +1194,7 @@ def _write_tsv_call_report(
                 "Consolidated Minor Alleles",
             ]
         )
-        mode = "exact" if max_mismatches == 0 else "fuzzy"
+        mode = "exact" if max_copy_mismatch_rate == 0 else "fuzzy"
         for index, call in enumerate(calls, start=1):
             writer.writerow(
                 [
@@ -1209,7 +1202,7 @@ def _write_tsv_call_report(
                     call.status,
                     _format_filter_reasons(call),
                     mode,
-                    max_mismatches,
+                    f"{max_copy_mismatch_rate:.6f}",
                     call.itd.insertion.start,
                     call.itd.copied_segment_start,
                     call.itd.copied_segment_end,
@@ -1292,8 +1285,8 @@ def _write_tsv_call_report(
                     min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
                     "Yes" if consolidation.enabled else "No",
-                    consolidation.max_allele_mismatches,
-                    consolidation.max_breakpoint_shift,
+                    f"{consolidation.max_allele_mismatch_rate:.6f}",
+                    f"{consolidation.max_breakpoint_shift_rate:.6f}",
                     f"{consolidation.max_minor_to_anchor_support_ratio:.6f}",
                     consolidation.min_anchor_fragment_count,
                     len(call.consolidated_members),
@@ -1304,7 +1297,7 @@ def _write_tsv_call_report(
         if not calls:
             empty_call_values: list[object] = ["."] * 34
             empty_call_values[3] = mode
-            empty_call_values[4] = max_mismatches
+            empty_call_values[4] = f"{max_copy_mismatch_rate:.6f}"
             empty_call_values[23] = min_mutant_fragment_count
             empty_call_values[24] = min_informative_fragment_count
             empty_call_values[25] = f"{min_mutant_fragment_fraction:.6f}"
@@ -1342,8 +1335,8 @@ def _write_tsv_call_report(
                     min_copied_segment_length,
                     "Yes" if require_in_frame else "No",
                     "Yes" if consolidation.enabled else "No",
-                    consolidation.max_allele_mismatches,
-                    consolidation.max_breakpoint_shift,
+                    f"{consolidation.max_allele_mismatch_rate:.6f}",
+                    f"{consolidation.max_breakpoint_shift_rate:.6f}",
                     f"{consolidation.max_minor_to_anchor_support_ratio:.6f}",
                     consolidation.min_anchor_fragment_count,
                     ".",
@@ -1538,7 +1531,7 @@ def _render_html_sample_summary(
 def _render_html_thresholds_section(
     *,
     filters: ITDFilter | None,
-    max_mismatches: int,
+    max_copy_mismatch_rate: float,
     alignment_filters: AlignmentEvidenceFilter | None = None,
     insertion_filters: InsertionEvidenceFilter | None = None,
     min_insert_length: int = 6,
@@ -1574,7 +1567,10 @@ def _render_html_thresholds_section(
         )
     items.extend(
         [
-            ("Max copied-segment mismatches", str(max_mismatches)),
+            (
+                "Max copied-segment mismatch rate",
+                f"{max_copy_mismatch_rate:.3f}",
+            ),
             ("Min insert length", str(min_insert_length)),
             ("Min copied-segment length", str(min_copied_segment_length)),
             ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
@@ -1583,12 +1579,12 @@ def _render_html_thresholds_section(
                 "Enabled" if consolidation.enabled else "Disabled",
             ),
             (
-                "Consolidation max allele mismatches",
-                str(consolidation.max_allele_mismatches),
+                "Consolidation max allele mismatch rate",
+                f"{consolidation.max_allele_mismatch_rate:.3f}",
             ),
             (
-                "Consolidation max breakpoint shift",
-                str(consolidation.max_breakpoint_shift),
+                "Consolidation max breakpoint shift rate",
+                f"{consolidation.max_breakpoint_shift_rate:.3f}",
             ),
             (
                 "Consolidation max minor/anchor support ratio",

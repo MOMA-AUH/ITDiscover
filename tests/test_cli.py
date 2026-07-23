@@ -139,13 +139,13 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
             "7",
             "--min-copied-segment-length",
             "9",
-            "--max-copy-mismatches",
-            "1",
+            "--max-copy-mismatch-rate",
+            "0.125",
             "--consolidate-minor-itd-variants",
-            "--consolidation-max-allele-mismatches",
-            "2",
-            "--consolidation-max-breakpoint-shift",
-            "4",
+            "--consolidation-max-allele-mismatch-rate",
+            "0.2",
+            "--consolidation-max-breakpoint-shift-rate",
+            "0.5",
             "--consolidation-max-minor-support-ratio",
             "0.02",
             "--consolidation-min-anchor-fragment-count",
@@ -156,21 +156,26 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
     assert args.max_directional_mutant_fraction_share == 0.8
     assert args.min_directional_opportunities == 7
     assert args.min_copied_segment_length == 9
-    assert args.max_copy_mismatches == 1
+    assert args.max_copy_mismatch_rate == 0.125
     assert args.consolidate_minor_itd_variants is True
-    assert args.consolidation_max_allele_mismatches == 2
-    assert args.consolidation_max_breakpoint_shift == 4
+    assert args.consolidation_max_allele_mismatch_rate == 0.2
+    assert args.consolidation_max_breakpoint_shift_rate == 0.5
     assert args.consolidation_max_minor_support_ratio == 0.02
     assert args.consolidation_min_anchor_fragment_count == 8
     help_text = parser.format_help()
     assert "advanced minor-allele consolidation:" in help_text
-    assert "--max-copy-mismatches" in help_text
-    assert "--consolidation-max-allele-mismatches" in help_text
+    assert "--max-copy-mismatch-rate" in help_text
+    assert "--consolidation-max-allele-mismatch-rate" in help_text
+    assert "--consolidation-max-breakpoint-shift-rate" in help_text
 
 
 @pytest.mark.parametrize(
     "removed_option",
-    ["--max-mismatches", "--consolidation-max-sequence-edits"],
+    [
+        "--max-copy-mismatches",
+        "--consolidation-max-allele-mismatches",
+        "--consolidation-max-breakpoint-shift",
+    ],
 )
 def test_removed_matching_option_aliases_are_rejected(
     removed_option,
@@ -368,8 +373,8 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
                 "12",
                 "--min-mean-quality",
                 "30",
-                "--max-copy-mismatches",
-                "1",
+                "--max-copy-mismatch-rate",
+                str(1 / 6),
                 "--output",
                 str(report_path),
             ]
@@ -391,8 +396,8 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Min copied-segment length" in report
     assert "Require in-frame insertions" in report
     assert "VAF" not in report
-    assert "Max copied-segment mismatches" in report
-    assert ">1<" in report
+    assert "Max copied-segment mismatch rate" in report
+    assert ">0.167<" in report
     assert "Representative alignment" in report
     assert "Concordant Fragments" in report
     assert "Single-mate Fragments" in report
@@ -479,8 +484,8 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
                 "12",
                 "--min-mean-quality",
                 "30",
-                "--max-copy-mismatches",
-                "1",
+                "--max-copy-mismatch-rate",
+                str(1 / 6),
                 "--output-tsv",
                 str(report_path),
             ]
@@ -495,7 +500,7 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Status",
         "Filter Reasons",
         "Mode",
-        "Max Mismatches",
+        "Max Copy Mismatch Rate",
         "Insertion After Reference Base (0-based; -1=before first)",
         "Copied Segment Start (0-based)",
         "Copied Segment End (0-based, inclusive)",
@@ -573,8 +578,8 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Min Copied Segment Length",
         "Require In-frame Insertions",
         "Minor-variant Consolidation Enabled",
-        "Consolidation Max Allele Mismatches",
-        "Consolidation Max Breakpoint Shift",
+        "Consolidation Max Allele Mismatch Rate",
+        "Consolidation Max Breakpoint Shift Rate",
         "Consolidation Max Minor/Anchor Support Ratio",
         "Consolidation Min Anchor Fragment Count",
         "Consolidated Minor Allele Count",
@@ -586,7 +591,7 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "LOW_MUTANT_FRAGMENT_COUNT;LOW_INFORMATIVE_FRAGMENT_COUNT"
     )
     assert rows[1][3] == "fuzzy"
-    assert rows[1][4] == "1"
+    assert rows[1][4] == "0.166667"
     assert rows[1][5] == "8"
     assert rows[1][6] == "3"
     assert rows[1][7] == "8"
@@ -619,7 +624,13 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][76] == cli.COORDINATE_CONVENTION
     assert rows[1][77] == "immediately before insertion"
     assert rows[1][78:81] == ["6", "6", "Yes"]
-    assert rows[1][81:86] == ["No", "1", "6", "0.050000", "3"]
+    assert rows[1][81:86] == [
+        "No",
+        "0.125000",
+        "1.000000",
+        "0.050000",
+        "3",
+    ]
     assert rows[1][86:] == ["0", "0", "."]
 
 
@@ -1093,7 +1104,9 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
                     ),
                     fragment_count=1,
                     allele_mismatches=1,
+                    allele_mismatch_rate=1 / 6,
                     breakpoint_shift=0,
+                    breakpoint_shift_rate=0,
                     reason="same-breakpoint sequence error",
                 ),
             ),
@@ -1150,6 +1163,8 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
     assert "Minor-variant consolidation</span>" in report
     assert "Enabled</span>" in report
     assert "sequence=CCCCGG" in report
+    assert "allele_mismatch_rate=0.166667" in report
+    assert "breakpoint_shift_rate=0.000000" in report
     assert "same-breakpoint sequence error" in report
 
 
@@ -1261,7 +1276,7 @@ def test_call_command_rejects_non_html_output_path(tmp_path, capsys) -> None:
     assert "must end with .html" in capsys.readouterr().err
 
 
-def test_call_command_rejects_negative_max_copy_mismatches(capsys) -> None:
+def test_call_command_rejects_invalid_max_copy_mismatch_rate(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(
             [
@@ -1275,13 +1290,13 @@ def test_call_command_rejects_negative_max_copy_mismatches(capsys) -> None:
                 "AAA",
                 "--reverse-primer",
                 "AAA",
-                "--max-copy-mismatches",
+                "--max-copy-mismatch-rate",
                 "-1",
             ]
         )
 
     assert exc_info.value.code == 2
-    assert "value must not be negative" in capsys.readouterr().err
+    assert "value must be between 0 and 1" in capsys.readouterr().err
 
 
 def test_call_command_filters_without_stdout_report(tmp_path, capsys) -> None:

@@ -41,6 +41,23 @@ def permissive_filters() -> ITDFilter:
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_allele_mismatch_rate", -0.01),
+        ("max_allele_mismatch_rate", 1.01),
+        ("max_breakpoint_shift_rate", -0.01),
+        ("max_breakpoint_shift_rate", 1.01),
+    ],
+)
+def test_consolidation_rejects_invalid_length_relative_rates(
+    field: str,
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match=f"{field} must be between 0 and 1"):
+        ITDConsolidationSettings(**{field: value})
+
+
 def insertion_alignment(
     reference: str,
     insertion: str,
@@ -174,7 +191,10 @@ def test_consolidation_absorbs_weak_same_breakpoint_sequence_error() -> None:
         reference,
         min_copied_segment_length=5,
         filters=permissive_filters(),
-        consolidation=ITDConsolidationSettings(enabled=True),
+        consolidation=ITDConsolidationSettings(
+            enabled=True,
+            max_allele_mismatch_rate=1 / 6,
+        ),
     )
 
     assert len(unconsolidated) == 2
@@ -182,9 +202,70 @@ def test_consolidation_absorbs_weak_same_breakpoint_sequence_error() -> None:
     assert consolidated[0].mutant_fragment_count == 21
     assert consolidated[0].consolidated_minor_fragment_count == 1
     assert consolidated[0].consolidated_members[0].allele.sequence == "CCCCGG"
+    assert consolidated[0].consolidated_members[0].allele_mismatches == 1
+    assert consolidated[0].consolidated_members[0].allele_mismatch_rate == (
+        1 / 6
+    )
     assert consolidated[0].consolidated_members[0].reason == (
         "same-breakpoint sequence error"
     )
+
+
+def test_consolidation_mismatch_rate_scales_with_insertion_length() -> None:
+    short_reference = "AAACCCGGGTTT"
+    short_alignments = [
+        insertion_alignment(
+            short_reference,
+            "CCCGGG",
+            read_id=f"short-anchor-{index}",
+        )
+        for index in range(20)
+    ]
+    short_alignments.append(
+        insertion_alignment(
+            short_reference,
+            "CCCCGG",
+            read_id="short-minor",
+        )
+    )
+    long_reference = "AAACCCGGTTTT"
+    long_alignments = [
+        insertion_alignment(
+            long_reference,
+            "CCCGGTTT",
+            read_id=f"long-anchor-{index}",
+        )
+        for index in range(20)
+    ]
+    long_alignments.append(
+        insertion_alignment(
+            long_reference,
+            "CCCGATTT",
+            read_id="long-minor",
+        )
+    )
+    settings = ITDConsolidationSettings(enabled=True)
+
+    short_calls = call_exact_itds(
+        short_alignments,
+        short_reference,
+        min_copied_segment_length=5,
+        filters=permissive_filters(),
+        consolidation=settings,
+    )
+    long_calls = call_exact_itds(
+        long_alignments,
+        long_reference,
+        min_copied_segment_length=3,
+        require_in_frame=False,
+        filters=permissive_filters(),
+        consolidation=settings,
+    )
+
+    assert len(short_calls) == 2
+    assert len(long_calls) == 1
+    assert long_calls[0].consolidated_members[0].allele_mismatches == 1
+    assert long_calls[0].consolidated_members[0].allele_mismatch_rate == 0.125
 
 
 def test_consolidation_reconciles_compatible_mate_observations_once() -> None:
@@ -221,7 +302,10 @@ def test_consolidation_reconciles_compatible_mate_observations_once() -> None:
         reference,
         min_copied_segment_length=5,
         filters=permissive_filters(),
-        consolidation=ITDConsolidationSettings(enabled=True),
+        consolidation=ITDConsolidationSettings(
+            enabled=True,
+            max_allele_mismatch_rate=1 / 6,
+        ),
     )[0]
 
     assert call.mutant_fragment_count == 20
@@ -260,7 +344,8 @@ def test_consolidation_obeys_breakpoint_and_support_safeguards() -> None:
         filters=permissive_filters(),
         consolidation=ITDConsolidationSettings(
             enabled=True,
-            max_breakpoint_shift=0,
+            max_allele_mismatch_rate=1 / 6,
+            max_breakpoint_shift_rate=0,
         ),
     )
     shifted_calls = call_exact_itds(
@@ -268,7 +353,10 @@ def test_consolidation_obeys_breakpoint_and_support_safeguards() -> None:
         reference,
         min_copied_segment_length=5,
         filters=permissive_filters(),
-        consolidation=ITDConsolidationSettings(enabled=True),
+        consolidation=ITDConsolidationSettings(
+            enabled=True,
+            max_allele_mismatch_rate=1 / 6,
+        ),
     )
     co_dominant_calls = call_exact_itds(
         anchor_alignments + co_dominant,
@@ -280,6 +368,9 @@ def test_consolidation_obeys_breakpoint_and_support_safeguards() -> None:
 
     assert len(shifted_calls) == 1
     assert shifted_calls[0].consolidated_members[0].breakpoint_shift == 1
+    assert shifted_calls[0].consolidated_members[0].breakpoint_shift_rate == (
+        1 / 6
+    )
     assert shifted_calls[0].consolidated_members[0].reason == (
         "nearby-breakpoint local-haplotype match"
     )
@@ -636,7 +727,7 @@ def test_call_fuzzy_itds_does_not_hide_mate_sequence_disagreement() -> None:
     calls, representatives = call_fuzzy_itds_with_representatives(
         alignments,
         reference,
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
         filters=permissive_filters(),
     )
 
@@ -1310,7 +1401,7 @@ def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
     calls, representatives = call_fuzzy_itds_with_representatives(
         alignments,
         reference,
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
     )
 
     assert len(calls) == 1
@@ -1361,7 +1452,7 @@ def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches(
     calls, representatives = call_fuzzy_itds_with_representatives(
         alignments,
         reference,
-        max_mismatches=1,
+        max_copy_mismatch_rate=1 / 6,
     )
 
     assert len(calls) == 1
