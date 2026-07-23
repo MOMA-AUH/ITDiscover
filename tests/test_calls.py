@@ -9,7 +9,7 @@ from itdiscover.calls import (
     call_exact_itds_with_representatives,
     call_fuzzy_itds_with_representatives,
 )
-from itdiscover.insertions import Alignment, Insertion
+from itdiscover.insertions import Alignment, Insertion, InsertionEvidenceFilter
 from itdiscover.itds import ITD
 
 
@@ -158,6 +158,94 @@ def test_call_exact_itds_counts_concordant_and_single_mate_fragments() -> None:
     assert call.unresolved_fragment_count == 0
 
 
+def test_low_quality_mutant_evidence_is_unresolved_not_wild_type() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    alignments = [
+        Alignment(
+            read_id="low-quality-mutant/1",
+            fragment_id="low-quality-mutant",
+            read_sequence=mutant,
+            aligned_read=mutant,
+            aligned_reference="AAA------CCCGGGTTT",
+            direction="forward",
+            aligned_qualities=(40, 40, 40, 29) + (40,) * 14,
+        ),
+        Alignment(
+            read_id="wild-type/1",
+            fragment_id="wild-type",
+            read_sequence=reference,
+            aligned_read=reference,
+            aligned_reference=reference,
+            direction="forward",
+            aligned_qualities=(40,) * len(reference),
+        ),
+        Alignment(
+            read_id="not-informative/1",
+            fragment_id="not-informative",
+            read_sequence="CCCGGGTTT",
+            aligned_read="---CCCGGGTTT",
+            aligned_reference=reference,
+            direction="forward",
+            aligned_qualities=(None, None, None) + (40,) * 9,
+        ),
+    ]
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=permissive_filters(),
+        evidence_filter=InsertionEvidenceFilter(),
+    )[0]
+
+    assert call.mutant_fragment_count == 0
+    assert call.wild_type_fragment_count == 1
+    assert call.informative_fragment_count == 1
+    assert call.conflicting_fragment_count == 0
+    assert call.unresolved_fragment_count == 1
+    assert call.not_informative_fragment_count == 1
+    assert call.observed_supporting_fragment_fraction == 0
+
+
+def test_low_quality_wild_type_evidence_is_unresolved_not_denominator() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    low_quality_wt = (40, 40, 29) + (40,) * 9
+    alignments = [
+        Alignment(
+            read_id="mutant/1",
+            fragment_id="mutant",
+            read_sequence=mutant,
+            aligned_read=mutant,
+            aligned_reference="AAA------CCCGGGTTT",
+            direction="forward",
+            aligned_qualities=(40,) * len(mutant),
+        ),
+        Alignment(
+            read_id="low-quality-wt/1",
+            fragment_id="low-quality-wt",
+            read_sequence=reference,
+            aligned_read=reference,
+            aligned_reference=reference,
+            direction="forward",
+            aligned_qualities=low_quality_wt,
+        ),
+    ]
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=permissive_filters(),
+        evidence_filter=InsertionEvidenceFilter(),
+    )[0]
+
+    assert call.mutant_fragment_count == 1
+    assert call.wild_type_fragment_count == 0
+    assert call.informative_fragment_count == 1
+    assert call.unresolved_fragment_count == 1
+    assert call.observed_supporting_fragment_fraction == 1
+
+
 def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
     reference = "AAACCCGGGTTT"
     mutant = "AAACCCGGGCCCGGGTTT"
@@ -186,9 +274,96 @@ def test_call_exact_itds_excludes_mutant_wt_mate_disagreement() -> None:
     assert call.observed_supporting_fragment_fraction == 0
     assert call.discordant_fragment_count == 1
     assert call.filter_reasons == (
-        "ONLY_DISCORDANT_MATE_EVIDENCE",
-        "LOW_SUPPORT",
+        "ONLY_CONFLICTING_MATE_EVIDENCE",
+        "AMBIGUOUS_EVIDENCE_DOMINATES",
+        "LOW_MUTANT_FRAGMENT_COUNT",
     )
+
+
+def test_conflicting_evidence_cannot_be_hidden_from_the_fraction() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    mutant_alignment = "AAA------CCCGGGTTT"
+    alignments: list[Alignment] = []
+
+    for index in range(3):
+        fragment_id = f"mutant-{index}"
+        alignments.extend(
+            [
+                make_alignment(
+                    f"{fragment_id}/1",
+                    mutant,
+                    mutant,
+                    mutant_alignment,
+                    fragment_id=fragment_id,
+                ),
+                make_alignment(
+                    f"{fragment_id}/2",
+                    mutant,
+                    mutant,
+                    mutant_alignment,
+                    direction="reverse",
+                    fragment_id=fragment_id,
+                ),
+            ]
+        )
+    for index in range(97):
+        fragment_id = f"conflicting-{index}"
+        alignments.extend(
+            [
+                make_alignment(
+                    f"{fragment_id}/1",
+                    mutant,
+                    mutant,
+                    mutant_alignment,
+                    fragment_id=fragment_id,
+                ),
+                make_alignment(
+                    f"{fragment_id}/2",
+                    reference,
+                    reference,
+                    reference,
+                    direction="reverse",
+                    fragment_id=fragment_id,
+                ),
+            ]
+        )
+    for index in range(7):
+        fragment_id = f"wild-type-{index}"
+        alignments.extend(
+            [
+                make_alignment(
+                    f"{fragment_id}/1",
+                    reference,
+                    reference,
+                    reference,
+                    fragment_id=fragment_id,
+                ),
+                make_alignment(
+                    f"{fragment_id}/2",
+                    reference,
+                    reference,
+                    reference,
+                    direction="reverse",
+                    fragment_id=fragment_id,
+                ),
+            ]
+        )
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=permissive_filters(),
+    )[0]
+
+    assert call.mutant_fragment_count == 3
+    assert call.wild_type_fragment_count == 7
+    assert call.informative_fragment_count == 10
+    assert call.conflicting_fragment_count == 97
+    assert call.unresolved_fragment_count == 0
+    assert call.observed_supporting_fragment_fraction == 0.3
+    assert call.status == "FAIL"
+    assert call.filter_reasons == ("AMBIGUOUS_EVIDENCE_DOMINATES",)
 
 
 def test_call_exact_itds_excludes_mutually_incompatible_mate_candidates() -> None:
@@ -221,7 +396,11 @@ def test_call_exact_itds_excludes_mutually_incompatible_mate_candidates() -> Non
     assert all(call.discordant_fragment_count == 1 for call in calls)
     assert all(
         call.filter_reasons
-        == ("ONLY_DISCORDANT_MATE_EVIDENCE", "LOW_SUPPORT")
+        == (
+            "ONLY_CONFLICTING_MATE_EVIDENCE",
+            "AMBIGUOUS_EVIDENCE_DOMINATES",
+            "LOW_MUTANT_FRAGMENT_COUNT",
+        )
         for call in calls
     )
 
@@ -254,7 +433,11 @@ def test_call_exact_itds_marks_multiple_same_mate_candidates_unresolved() -> Non
     assert all(call.unresolved_fragment_count == 1 for call in calls)
     assert all(
         call.filter_reasons
-        == ("ONLY_UNRESOLVED_MATE_EVIDENCE", "LOW_SUPPORT")
+        == (
+            "ONLY_UNRESOLVED_EVIDENCE",
+            "AMBIGUOUS_EVIDENCE_DOMINATES",
+            "LOW_MUTANT_FRAGMENT_COUNT",
+        )
         for call in calls
     )
 
@@ -291,8 +474,9 @@ def test_call_fuzzy_itds_does_not_hide_mate_sequence_disagreement() -> None:
     assert calls[0].spanning_fragment_count == 0
     assert calls[0].unresolved_fragment_count == 1
     assert calls[0].filter_reasons == (
-        "ONLY_UNRESOLVED_MATE_EVIDENCE",
-        "LOW_SUPPORT",
+        "ONLY_UNRESOLVED_EVIDENCE",
+        "AMBIGUOUS_EVIDENCE_DOMINATES",
+        "LOW_MUTANT_FRAGMENT_COUNT",
     )
     assert all(
         representative.support_count == 0 for representative in representatives
@@ -747,7 +931,7 @@ def test_call_exact_itds_marks_call_as_fail_when_support_threshold_is_not_met() 
 
     assert len(calls) == 1
     assert calls[0].status == "FAIL"
-    assert calls[0].filter_reasons == ("LOW_SUPPORT",)
+    assert calls[0].filter_reasons == ("LOW_MUTANT_FRAGMENT_COUNT",)
 
 
 def test_default_call_filters_do_not_pass_a_single_fragment_candidate() -> None:
@@ -762,7 +946,10 @@ def test_default_call_filters_do_not_pass_a_single_fragment_candidate() -> None:
     calls = call_exact_itds([alignment], reference)
 
     assert calls[0].status == "FAIL"
-    assert calls[0].filter_reasons == ("LOW_SUPPORT", "LOW_COVERAGE")
+    assert calls[0].filter_reasons == (
+        "LOW_MUTANT_FRAGMENT_COUNT",
+        "LOW_INFORMATIVE_FRAGMENT_COUNT",
+    )
 
 
 def test_filters_on_observed_supporting_fragment_fraction() -> None:
@@ -790,7 +977,7 @@ def test_filters_on_observed_supporting_fragment_fraction() -> None:
     )
 
     assert calls[0].observed_supporting_fragment_fraction == 0.1
-    assert calls[0].filter_reasons == ("LOW_SUPPORTING_FRAGMENT_FRACTION",)
+    assert calls[0].filter_reasons == ("LOW_MUTANT_FRAGMENT_FRACTION",)
 
 
 def test_call_exact_itds_marks_one_direction_only_support_as_direction_biased() -> None:

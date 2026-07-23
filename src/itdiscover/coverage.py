@@ -1,4 +1,4 @@
-"""Inter-base coverage and observed supporting-fragment fractions."""
+"""Inter-base coverage and observed candidate-fragment fractions."""
 
 import warnings
 
@@ -81,12 +81,13 @@ def observed_supporting_fragment_fraction(
     supporting_fragment_count: int,
     spanning_fragment_count: int,
 ) -> float:
-    """Return supporting fragments divided by locally spanning fragments.
+    """Return mutant fragments divided by mutant plus wild-type fragments.
 
-    Counts are post-filter, fragment-deduplicated counts. Zero spanning
-    coverage is defined as 0.0 only when there is also no
-    supporting evidence.  Positive support without spanning coverage is an
-    impossible count combination and must not be represented as a fraction.
+    The historical parameter names are retained for compatibility:
+    ``supporting_fragment_count`` is the mutant count and
+    ``spanning_fragment_count`` is the informative mutant-plus-WT count.
+    Counts are post-filter and fragment-deduplicated. Zero informative evidence
+    is defined as 0.0 only when there is also no mutant evidence.
     """
     if supporting_fragment_count < 0:
         raise ValueError("supporting_fragment_count must not be negative")

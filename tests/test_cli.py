@@ -164,9 +164,9 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
     assert "CALL THRESHOLDS" in report
-    assert "Min supporting fragments" in report
-    assert "Min spanning fragments" in report
-    assert "Min supporting-fragment fraction" in report
+    assert "Min mutant fragments" in report
+    assert "Min informative fragments" in report
+    assert "Min mutant-fragment fraction" in report
     assert "Min insert length" in report
     assert "Min tandem length" in report
     assert "Require in-frame insertions" in report
@@ -176,8 +176,10 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Representative alignment" in report
     assert "Concordant Fragments" in report
     assert "Single-mate Fragments" in report
-    assert "Discordant Fragments (excluded)" in report
-    assert "Unresolved Fragments (excluded)" in report
+    assert "Conflicting Fragments" in report
+    assert "Unresolved Fragments" in report
+    assert "Wild-type Fragments" in report
+    assert "Not-informative Fragments" in report
     assert "tandem sequence" in report
     assert "inserted sequence" in report
     assert "spacer sequence" in report
@@ -275,15 +277,15 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Spacer Suffix",
         "Insertion Sequence",
         "Read-Edge Observation",
-        "Supporting Fragment Count",
+        "Mutant Fragment Count",
         "Forward Support Count",
         "Reverse Support Count",
-        "Spanning Fragment Count",
-        "Observed Supporting-fragment Fraction",
-        "Supporting/Spanning Fragments",
-        "Min Supporting Fragment Count",
-        "Min Spanning Fragment Count",
-        "Min Supporting-fragment Fraction",
+        "Informative Fragment Count",
+        "Observed Mutant-fragment Fraction",
+        "Mutant/Informative Fragments",
+        "Min Mutant Fragment Count",
+        "Min Informative Fragment Count",
+        "Min Mutant-fragment Fraction",
         "Max Single-direction Fraction",
         "Min Directional Observations",
         "Min Alignment Identity",
@@ -328,8 +330,10 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "QC Min Primer Retention Fraction",
         "Concordant Fragment Count",
         "Single-mate Fragment Count",
-        "Discordant Fragment Count",
+        "Conflicting Fragment Count",
         "Unresolved Fragment Count",
+        "Wild-type Fragment Count",
+        "Not-informative Fragment Count",
         "Reference FASTA Header",
         "Reference Length",
         "Reference Sequence SHA-256",
@@ -340,7 +344,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Require In-frame Insertions",
     ]
     assert rows[1][1] == "FAIL"
-    assert rows[1][2] == "LOW_SUPPORT;LOW_COVERAGE"
+    assert rows[1][2] == (
+        "LOW_MUTANT_FRAGMENT_COUNT;LOW_INFORMATIVE_FRAGMENT_COUNT"
+    )
     assert rows[1][3] == "fuzzy"
     assert rows[1][4] == "1"
     assert rows[1][5] == "8"
@@ -352,7 +358,7 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][16:19] == [
         "2",
         "0.500000",
-        "1/2 spanning fragments",
+        "1/2 informative fragments",
     ]
     assert rows[1][31:36] == [
         "sample",
@@ -362,11 +368,11 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "LOW_USABLE_FRAGMENT_COUNT;LOW_MEDIAN_INTERBASE_COVERAGE",
     ]
     assert rows[1][57:59] == ["0", "1"]
-    assert rows[1][64:68] == ["1", "0", "0", "0"]
-    assert rows[1][68:70] == ["FLT3 exon 14-15 assay", "12"]
-    assert rows[1][70] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
-    assert rows[1][71] == cli.COORDINATE_CONVENTION
-    assert rows[1][72] == "upstream"
+    assert rows[1][64:70] == ["1", "0", "0", "0", "1", "0"]
+    assert rows[1][70:72] == ["FLT3 exon 14-15 assay", "12"]
+    assert rows[1][72] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
+    assert rows[1][73] == cli.COORDINATE_CONVENTION
+    assert rows[1][74] == "upstream"
     assert rows[1][-3:] == ["6", "6", "Yes"]
 
 
@@ -733,9 +739,9 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     assert "Reference FASTA Header" in report
     assert "Reference Sequence SHA-256" in report
     assert cli.COORDINATE_CONVENTION in report
-    assert "Supporting Fragments" in report
-    assert "Observed Supporting-fragment Fraction" in report
-    assert "66.7% (2/3 spanning fragments)" in report
+    assert "Mutant Fragments" in report
+    assert "Observed Mutant-fragment Fraction" in report
+    assert "66.7% (2/3 informative fragments)" in report
     assert "VAF" not in report
     assert "support pattern count 1" not in report
     assert "mismatches 0" not in report

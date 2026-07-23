@@ -113,7 +113,7 @@ def test_filtered_candidate_produces_qc_warning_without_becoming_detected() -> N
         spanning_fragment_count=10,
         observed_supporting_fragment_fraction=0.1,
         status="FAIL",
-        filter_reasons=("LOW_SUPPORT",),
+        filter_reasons=("LOW_MUTANT_FRAGMENT_COUNT",),
     )
 
     result = build_sample_result(
@@ -129,6 +129,92 @@ def test_filtered_candidate_produces_qc_warning_without_becoming_detected() -> N
     assert result.outcome == "no passing ITD detected"
     assert result.qc_reasons == ("FILTERED_ITD_CANDIDATES_PRESENT",)
     assert result.filtered_candidate_count == 1
+
+
+def test_dominant_ambiguous_evidence_makes_no_call_sample_indeterminate() -> None:
+    candidate = ITDCall(
+        itd=ITD(
+            insertion=Insertion(
+                read_id="candidate/1",
+                fragment_id="candidate",
+                start=2,
+                sequence="CCCGGG",
+                direction="forward",
+            ),
+            tandem_start=3,
+            tandem_sequence="CCCGGG",
+            orientation="downstream",
+        ),
+        supporting_fragment_count=3,
+        wild_type_fragment_count=7,
+        spanning_fragment_count=10,
+        observed_supporting_fragment_fraction=0.3,
+        discordant_fragment_count=97,
+        status="FAIL",
+        filter_reasons=("AMBIGUOUS_EVIDENCE_DOMINATES",),
+    )
+
+    result = build_sample_result(
+        sample_id="ambiguous-candidate",
+        calls=[candidate],
+        preprocessing=preprocessing_metrics(),
+        alignment=alignment_metrics(),
+        coverage=CoverageMetrics(minimum=10, median=10, maximum=10),
+        thresholds=SampleQCThresholds(),
+    )
+
+    assert result.qc_status == "fail"
+    assert result.outcome == "indeterminate"
+    assert result.qc_reasons == ("AMBIGUOUS_ITD_EVIDENCE_DOMINATES",)
+
+
+def test_dominant_ambiguous_candidate_warns_when_another_call_passes() -> None:
+    ambiguous = ITDCall(
+        itd=ITD(
+            insertion=Insertion(
+                read_id="ambiguous/1",
+                fragment_id="ambiguous",
+                start=2,
+                sequence="CCCGGG",
+                direction="forward",
+            ),
+            tandem_start=3,
+            tandem_sequence="CCCGGG",
+            orientation="downstream",
+        ),
+        supporting_fragment_count=1,
+        wild_type_fragment_count=9,
+        spanning_fragment_count=10,
+        observed_supporting_fragment_fraction=0.1,
+        unresolved_fragment_count=11,
+        status="FAIL",
+        filter_reasons=("AMBIGUOUS_EVIDENCE_DOMINATES",),
+    )
+    passing = replace(
+        ambiguous,
+        supporting_fragment_count=5,
+        wild_type_fragment_count=5,
+        observed_supporting_fragment_fraction=0.5,
+        unresolved_fragment_count=0,
+        status="PASS",
+        filter_reasons=(),
+    )
+
+    result = build_sample_result(
+        sample_id="passing-with-ambiguous-candidate",
+        calls=[passing, ambiguous],
+        preprocessing=preprocessing_metrics(),
+        alignment=alignment_metrics(),
+        coverage=CoverageMetrics(minimum=10, median=10, maximum=10),
+        thresholds=SampleQCThresholds(),
+    )
+
+    assert result.qc_status == "warn"
+    assert result.outcome == "ITD detected"
+    assert result.qc_reasons == (
+        "AMBIGUOUS_ITD_EVIDENCE_DOMINATES",
+        "FILTERED_ITD_CANDIDATES_PRESENT",
+    )
 
 
 def test_analysis_error_is_not_reported_as_negative() -> None:

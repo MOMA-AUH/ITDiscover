@@ -33,33 +33,32 @@ itdiscover \
 
 The `--output` flag writes an HTML report with one representative alignment per called duplication.
 The `--output-tsv` flag writes a tab-separated summary of the called ITDs.
-By default, `PASS` requires at least 3 supporting fragments, 10 spanning
-fragments, and a supporting-fragment fraction of 0.01. These are conservative
-research defaults, not clinically validated thresholds.
+By default, `PASS` requires at least 3 mutant fragments, 10 informative
+fragments, and an observed mutant-fragment fraction of 0.01. These are
+conservative research defaults, not clinically validated thresholds.
 
-The reported **observed supporting-fragment fraction** is the number of
-distinct FASTQ fragment IDs supporting a call divided by the number of
-distinct fragment IDs spanning that call's inter-base insertion site. A
-supporting fragment has at least one read that passes preprocessing and
-alignment filters and whose insertion passes the configured length, frame,
-junction-quality, adapter, and ITD-classification rules. A spanning fragment
-has at least one
-preprocessing- and alignment-filtered read with called bases on both sides of
-the insertion site. Overlapping R1/R2 reads with the same fragment ID count
-once in each count. The value is displayed with its numerator and denominator,
-for example `12.3% (37/301 spanning fragments)`.
+Evidence is classified separately for each candidate ALT allele and fragment:
 
-Mate evidence is reconciled per fragment, insertion site, and candidate before
-these counts are calculated. `concordant` fragments have compatible ITD calls
-from both mates. `single-mate` fragments have one supporting mate while the
-other mate is absent after filtering or does not span the breakpoint. Both
-categories count in the numerator and denominator. A mate that spans the
-breakpoint without the same candidate makes the fragment `discordant`; multiple
-incompatible candidates from one mate, or mates that normalize to the same
-candidate but disagree on its inserted sequence, make it `unresolved`.
-Discordant and unresolved fragments are reported but excluded from the
-candidate's support numerator and its local spanning denominator, preventing
-incompatible mate evidence from producing an apparent fraction of 1.
+- `mutant`: high-quality evidence for the candidate ALT;
+- `wild type`: high-quality evidence for the reference junction;
+- `conflicting`: the mates support incompatible alleles;
+- `unresolved`: the fragment spans the junction but cannot be assigned
+  confidently, including candidate evidence rejected by local quality filters;
+- `not informative`: the fragment does not cover the candidate junction.
+
+Mutant and wild-type evidence use the same configured junction anchors and
+quality threshold. The reported **observed mutant-fragment fraction** is
+`mutant / (mutant + wild type)`, displayed with both counts, for example
+`12.3% (37/301 informative fragments)`. Conflicting, unresolved, and
+not-informative fragments do not enter the fraction but are always reported.
+If conflicting plus unresolved fragments outnumber informative fragments, the
+candidate fails and a sample without another passing call is indeterminate.
+
+Mate evidence is reconciled before these states are assigned. `concordant`
+fragments have compatible candidate evidence from both mates. `single-mate`
+fragments have one mutant mate without high-quality contradictory wild-type
+evidence from the other mate. Both are subcategories of `mutant` and each
+fragment is counted only once.
 
 This post-filter fragment fraction does not collapse PCR duplicates or UMIs,
 correct amplification bias, or estimate a clinically validated VAF or allelic

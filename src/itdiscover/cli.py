@@ -145,30 +145,33 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--min-mutant-fragment-count",
         "--min-supporting-fragment-count",
         "--min-support-count",
         dest="min_supporting_fragment_count",
         type=_positive_int,
         default=3,
-        help="Minimum supporting fragment count required to pass filtering.",
+        help="Minimum mutant fragment count required to pass filtering.",
     )
     parser.add_argument(
+        "--min-informative-fragment-count",
         "--min-spanning-fragment-count",
         "--min-coverage",
         dest="min_spanning_fragment_count",
         type=_non_negative_int,
         default=10,
-        help="Minimum locally spanning fragment count required to pass filtering.",
+        help="Minimum mutant-plus-wild-type fragment count required to pass.",
     )
     parser.add_argument(
+        "--min-mutant-fragment-fraction",
         "--min-supporting-fragment-fraction",
         "--min-vaf",
         dest="min_supporting_fragment_fraction",
         type=_fraction,
         default=0.01,
         help=(
-            "Minimum observed supporting-fragment fraction required to pass; "
-            "this is not a validated VAF or allelic ratio."
+            "Minimum observed mutant/(mutant + wild type) fragment fraction "
+            "required to pass; this is not a validated VAF or allelic ratio."
         ),
     )
     parser.add_argument(
@@ -941,11 +944,12 @@ def _write_unique_support_alignment_html_report(
   __REFERENCE_SUMMARY__
   __SAMPLE_SUMMARY__
   __THRESHOLDS__
-  <p class="quantification-note">Observed supporting-fragment fraction = distinct
-  supporting fragment IDs / distinct locally spanning fragment IDs after the
-  configured read, alignment, junction, adapter, and ITD-calling filters.
-  Overlapping mates count once per fragment. PCR duplicates are not collapsed
-  unless they already share a fragment ID.</p>
+  <p class="quantification-note">Observed mutant-fragment fraction = mutant
+  fragments / (mutant + wild-type fragments). Both allele states require the
+  configured high-quality junction anchors. Conflicting, unresolved, and
+  not-informative fragments are reported separately. Overlapping mates count
+  once per fragment. PCR duplicates are not collapsed unless they already
+  share a fragment ID.</p>
   <div class="legend">
     <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
@@ -1020,15 +1024,15 @@ def _write_tsv_call_report(
                 "Spacer Suffix",
                 "Insertion Sequence",
                 "Read-Edge Observation",
-                "Supporting Fragment Count",
+                "Mutant Fragment Count",
                 "Forward Support Count",
                 "Reverse Support Count",
-                "Spanning Fragment Count",
-                "Observed Supporting-fragment Fraction",
-                "Supporting/Spanning Fragments",
-                "Min Supporting Fragment Count",
-                "Min Spanning Fragment Count",
-                "Min Supporting-fragment Fraction",
+                "Informative Fragment Count",
+                "Observed Mutant-fragment Fraction",
+                "Mutant/Informative Fragments",
+                "Min Mutant Fragment Count",
+                "Min Informative Fragment Count",
+                "Min Mutant-fragment Fraction",
                 "Max Single-direction Fraction",
                 "Min Directional Observations",
                 "Min Alignment Identity",
@@ -1073,8 +1077,10 @@ def _write_tsv_call_report(
                 "QC Min Primer Retention Fraction",
                 "Concordant Fragment Count",
                 "Single-mate Fragment Count",
-                "Discordant Fragment Count",
+                "Conflicting Fragment Count",
                 "Unresolved Fragment Count",
+                "Wild-type Fragment Count",
+                "Not-informative Fragment Count",
                 "Reference FASTA Header",
                 "Reference Length",
                 "Reference Sequence SHA-256",
@@ -1109,7 +1115,7 @@ def _write_tsv_call_report(
                     f"{call.observed_supporting_fragment_fraction:.6f}",
                     (
                         f"{call.supporting_fragment_count}/"
-                        f"{call.spanning_fragment_count} spanning fragments"
+                        f"{call.spanning_fragment_count} informative fragments"
                     ),
                     min_supporting_fragment_count,
                     min_spanning_fragment_count,
@@ -1158,6 +1164,8 @@ def _write_tsv_call_report(
                     call.single_mate_fragment_count,
                     call.discordant_fragment_count,
                     call.unresolved_fragment_count,
+                    call.wild_type_fragment_count,
+                    call.not_informative_fragment_count,
                     reference_id or ".",
                     reference_length if reference_length is not None else ".",
                     reference_sha256 or ".",
@@ -1197,7 +1205,7 @@ def _write_tsv_call_report(
             writer.writerow(
                 empty_call_values
                 + _sample_tsv_values(sample_result, qc_thresholds)
-                + [".", ".", ".", "."]
+                + [".", ".", ".", ".", ".", "."]
                 + [
                     reference_id or ".",
                     reference_length if reference_length is not None else ".",
@@ -1410,15 +1418,15 @@ def _render_html_thresholds_section(
         items.extend(
             [
                 (
-                    "Min supporting fragments",
+                    "Min mutant fragments",
                     str(filters.min_supporting_fragment_count),
                 ),
                 (
-                    "Min spanning fragments",
+                    "Min informative fragments",
                     str(filters.min_spanning_fragment_count),
                 ),
                 (
-                    "Min supporting-fragment fraction",
+                    "Min mutant-fragment fraction",
                     f"{filters.min_observed_supporting_fragment_fraction:.3%}",
                 ),
                 (
@@ -1542,26 +1550,31 @@ def _render_html_call_section(
             if call.itd.is_partial_observation
             else 'No',
         ),
-        ('Supporting Fragments', str(call.supporting_fragment_count)),
+        ('Mutant Fragments', str(call.mutant_fragment_count)),
+        ('Wild-type Fragments', str(call.wild_type_fragment_count)),
+        ('Informative Fragments', str(call.informative_fragment_count)),
         ('Forward Support Count', str(call.forward_support_count)),
         ('Reverse Support Count', str(call.reverse_support_count)),
         ('Concordant Fragments', str(call.concordant_fragment_count)),
         ('Single-mate Fragments', str(call.single_mate_fragment_count)),
         (
-            'Discordant Fragments (excluded)',
-            str(call.discordant_fragment_count),
+            'Conflicting Fragments',
+            str(call.conflicting_fragment_count),
         ),
         (
-            'Unresolved Fragments (excluded)',
+            'Unresolved Fragments',
             str(call.unresolved_fragment_count),
         ),
-        ('Spanning Fragments', str(call.spanning_fragment_count)),
         (
-            'Observed Supporting-fragment Fraction',
+            'Not-informative Fragments',
+            str(call.not_informative_fragment_count),
+        ),
+        (
+            'Observed Mutant-fragment Fraction',
             (
                 f"{call.observed_supporting_fragment_fraction:.1%} "
-                f"({call.supporting_fragment_count}/"
-                f"{call.spanning_fragment_count} spanning fragments)"
+                f"({call.mutant_fragment_count}/"
+                f"{call.informative_fragment_count} informative fragments)"
             ),
         ),
         ('Status', call.status),
