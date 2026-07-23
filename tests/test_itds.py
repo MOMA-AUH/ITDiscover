@@ -29,7 +29,7 @@ def test_classifies_exact_upstream_tandem_duplication_without_rewriting_breakpoi
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
+        orientation="upstream",
     )
 
 
@@ -61,7 +61,7 @@ def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
         insertion=insertion,
         tandem_start=0,
         tandem_sequence="AAAAAA",
-        orientation="downstream",
+        orientation="upstream",
     )
 
 
@@ -166,6 +166,30 @@ def test_itd_reports_inclusive_tandem_end_and_length() -> None:
     assert itd.length == 6
     assert itd.spacer_sequence == ""
     assert itd.spacer_length == 0
+
+
+def test_itd_rejects_incorrect_or_nonadjacent_orientation_semantics() -> None:
+    insertion = Insertion(
+        read_id="read-1",
+        start=8,
+        sequence="CCCGGG",
+        direction="forward",
+    )
+
+    with pytest.raises(ValueError, match="orientation is inconsistent"):
+        ITD(
+            insertion=insertion,
+            tandem_start=3,
+            tandem_sequence="CCCGGG",
+            orientation="downstream",
+        )
+    with pytest.raises(ValueError, match="not adjacent"):
+        ITD(
+            insertion=insertion,
+            tandem_start=0,
+            tandem_sequence="CCC",
+            orientation="upstream",
+        )
 
 
 def test_scores_exact_tandem_similarity() -> None:
@@ -322,7 +346,7 @@ def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
         insertion=insertion,
         tandem_start=0,
         tandem_sequence="AAAAAA",
-        orientation="downstream",
+        orientation="upstream",
     )
 
 
@@ -358,3 +382,40 @@ def test_classify_fuzzy_itd_rejects_negative_mismatch_threshold() -> None:
 
     with pytest.raises(ValueError, match="max_mismatches must not be negative"):
         classify_fuzzy_itd(insertion, "AAACCCGGGTTT", max_mismatches=-1)
+
+
+def test_minimum_tandem_length_is_configurable_for_three_base_duplication() -> None:
+    insertion = Insertion(
+        read_id="three-base-itd",
+        start=2,
+        sequence="CCC",
+        direction="forward",
+    )
+
+    assert classify_exact_itd(insertion, "AAACCCGGGTTT") is None
+    assert classify_exact_itd(
+        insertion,
+        "AAACCCGGGTTT",
+        min_tandem_length=3,
+    ) == ITD(
+        insertion=insertion,
+        tandem_start=3,
+        tandem_sequence="CCC",
+        orientation="downstream",
+    )
+
+
+def test_classification_rejects_invalid_minimum_tandem_length() -> None:
+    insertion = Insertion(
+        read_id="itd",
+        start=2,
+        sequence="CCC",
+        direction="forward",
+    )
+
+    with pytest.raises(ValueError, match="min_tandem_length"):
+        classify_exact_itd(
+            insertion,
+            "AAACCCGGGTTT",
+            min_tandem_length=0,
+        )

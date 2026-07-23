@@ -7,6 +7,7 @@ from itdiscover.reads import (
     orient_read,
     passes_read_filters,
     preprocess_fragments,
+    preprocess_fragments_with_metrics,
     preprocess_reads,
     trim_primers,
     trim_terminal_ns,
@@ -247,3 +248,59 @@ def test_preprocess_fragments_returns_passing_reads_from_paired_fragments() -> N
     assert preprocess_fragments([fragment], min_length=4, min_mean_quality=30) == [
         SequencingRead("fragment-1/1", "ACGT", (30,) * 4, "forward", fragment_id="fragment-1")
     ]
+
+
+def test_preprocess_fragments_retains_rejection_and_direction_metrics() -> None:
+    fragments = [
+        Fragment(
+            fragment_id="passing",
+            forward_read=SequencingRead(
+                "passing/1",
+                "AAAACGT",
+                (40,) * 7,
+                "forward",
+                fragment_id="passing",
+            ),
+            reverse_read=SequencingRead(
+                "passing/2",
+                "ACGT",
+                (40,) * 4,
+                "reverse",
+                fragment_id="passing",
+            ),
+        ),
+        Fragment(
+            fragment_id="missing-primer",
+            forward_read=SequencingRead(
+                "missing-primer/1",
+                "TTTACGT",
+                (40,) * 7,
+                "forward",
+                fragment_id="missing-primer",
+            ),
+            reverse_read=SequencingRead(
+                "missing-primer/2",
+                "ACGT",
+                (40,) * 4,
+                "reverse",
+                fragment_id="missing-primer",
+            ),
+        ),
+    ]
+
+    result = preprocess_fragments_with_metrics(
+        fragments,
+        min_length=4,
+        min_mean_quality=30,
+        trimming=ReadTrimSettings(forward_primer="AAA"),
+    )
+
+    assert result.metrics.input_fragment_count == 2
+    assert result.metrics.input_read_count == 4
+    assert result.metrics.primer_retained_forward_reads == 1
+    assert result.metrics.primer_retained_reverse_reads is None
+    assert result.metrics.primer_failed_read_count == 1
+    assert result.metrics.passing_read_count == 3
+    assert result.metrics.passing_forward_read_count == 1
+    assert result.metrics.passing_reverse_read_count == 2
+    assert result.metrics.usable_fragment_count == 2

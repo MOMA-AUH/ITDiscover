@@ -1,4 +1,6 @@
-"""Inter-base coverage and variant allele frequency calculations."""
+"""Inter-base coverage and observed supporting-fragment fractions."""
+
+import warnings
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -51,6 +53,16 @@ def spans_insertion_site(alignment: Alignment, site: int) -> bool:
 
 def interbase_coverage(alignments: Iterable[Alignment]) -> dict[int, int]:
     """Return fragment-level coverage for every spanned insertion site."""
+    return {
+        site: len(fragment_ids)
+        for site, fragment_ids in interbase_fragment_ids(alignments).items()
+    }
+
+
+def interbase_fragment_ids(
+    alignments: Iterable[Alignment],
+) -> dict[int, frozenset[str]]:
+    """Return distinct fragment IDs spanning each inter-base insertion site."""
     coverage: defaultdict[int, set[str]] = defaultdict(set)
 
     for alignment in alignments:
@@ -59,22 +71,43 @@ def interbase_coverage(alignments: Iterable[Alignment]) -> dict[int, int]:
             if spans_insertion_site(alignment, site):
                 coverage[site].add(alignment.fragment_id)
 
-    return {site: len(fragment_ids) for site, fragment_ids in coverage.items()}
+    return {
+        site: frozenset(fragment_ids)
+        for site, fragment_ids in coverage.items()
+    }
+
+
+def observed_supporting_fragment_fraction(
+    supporting_fragment_count: int,
+    spanning_fragment_count: int,
+) -> float:
+    """Return supporting fragments divided by locally spanning fragments.
+
+    Counts are post-filter, fragment-deduplicated counts. Zero spanning
+    coverage is defined as 0.0 only when there is also no
+    supporting evidence.  Positive support without spanning coverage is an
+    impossible count combination and must not be represented as a fraction.
+    """
+    if supporting_fragment_count < 0:
+        raise ValueError("supporting_fragment_count must not be negative")
+    if spanning_fragment_count < 0:
+        raise ValueError("spanning_fragment_count must not be negative")
+    if supporting_fragment_count > spanning_fragment_count:
+        raise ValueError(
+            "supporting_fragment_count must not exceed spanning_fragment_count"
+        )
+    if spanning_fragment_count == 0:
+        return 0.0
+    return supporting_fragment_count / spanning_fragment_count
 
 
 def variant_allele_frequency(supporting_count: int, spanning_count: int) -> float:
-    """Return VAF as a fraction of supporting reads among spanning reads.
-
-    Zero spanning coverage is defined as 0.0 only when there is also no
-    supporting evidence.  Positive support without spanning coverage is an
-    impossible count combination and must not be represented as a valid VAF.
-    """
-    if supporting_count < 0:
-        raise ValueError("supporting_count must not be negative")
-    if spanning_count < 0:
-        raise ValueError("spanning_count must not be negative")
-    if supporting_count > spanning_count:
-        raise ValueError("supporting_count must not exceed spanning_count")
-    if spanning_count == 0:
-        return 0.0
-    return supporting_count / spanning_count
+    """Deprecated compatibility alias for the observed fragment fraction."""
+    warnings.warn(
+        "variant_allele_frequency() is deprecated; use "
+        "observed_supporting_fragment_fraction(). The result is not a "
+        "validated VAF or allelic ratio.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return observed_supporting_fragment_fraction(supporting_count, spanning_count)

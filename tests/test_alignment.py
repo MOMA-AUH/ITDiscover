@@ -1,6 +1,11 @@
 import pytest
 
-from itdiscover.alignment import AlignmentScoring, align_read_to_reference
+from itdiscover.alignment import (
+    AlignmentEvidenceFilter,
+    AlignmentScoring,
+    align_read_to_reference,
+    passes_alignment_evidence_filters,
+)
 from itdiscover.insertions import Alignment
 from itdiscover.reads import SequencingRead
 
@@ -97,3 +102,36 @@ def test_align_read_to_reference_rejects_lowercase_reference() -> None:
 
     with pytest.raises(ValueError, match="reference contains invalid bases"):
         align_read_to_reference(read, "AAAccc")
+
+
+def test_alignment_evidence_filters_reject_off_target_and_ambiguous_reads() -> None:
+    off_target = Alignment(
+        read_id="off-target",
+        read_sequence="TTTTTT",
+        aligned_read="TTTTTT",
+        aligned_reference="AAACCC",
+        direction="forward",
+        score=-60,
+    )
+    ambiguous = Alignment(
+        read_id="ambiguous",
+        read_sequence="AAACCC",
+        aligned_read="AAACCC",
+        aligned_reference="AAACCC",
+        direction="forward",
+        score=30,
+        is_ambiguous=True,
+    )
+
+    assert not passes_alignment_evidence_filters(
+        off_target,
+        AlignmentEvidenceFilter(),
+    )
+    assert not passes_alignment_evidence_filters(
+        ambiguous,
+        AlignmentEvidenceFilter(reject_ambiguous=True),
+    )
+    assert passes_alignment_evidence_filters(
+        ambiguous,
+        AlignmentEvidenceFilter(reject_ambiguous=False),
+    )

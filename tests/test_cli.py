@@ -1,4 +1,5 @@
 import csv
+import hashlib
 
 import pytest
 
@@ -27,6 +28,25 @@ def test_main_requires_arguments(capsys) -> None:
     assert "required" in capsys.readouterr().err
 
 
+def test_event_length_thresholds_must_be_positive(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "--reference",
+                "reference.fasta",
+                "--r1",
+                "r1.fastq",
+                "--r2",
+                "r2.fastq",
+                "--min-tandem-length",
+                "0",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "at least 1" in capsys.readouterr().err
+
+
 def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> None:
     reference_path = tmp_path / "reference.fasta"
     reference_path.write_text(">FLT3\nAAACCCGGGTTT\n", encoding="utf-8")
@@ -50,9 +70,9 @@ def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> N
     r2_path.write_text(
         (
             "@itd-fragment/2\n"
-            "AAACCCGGGTTT\n"
+            f"{reverse_complement('AAACCCGGGCCCGGGTTT')}\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
             "AAACCCGGGTTT\n"
             "+\n"
@@ -106,9 +126,9 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     r2_path.write_text(
         (
             "@itd-fragment/2\n"
-            "AAACCCGGGTTT\n"
+            f"{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
             "AAACCCGGGTTT\n"
             "+\n"
@@ -144,12 +164,20 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
     assert "CALL THRESHOLDS" in report
-    assert "Min support count" in report
-    assert "Min coverage" in report
-    assert "Min VAF" in report
+    assert "Min supporting fragments" in report
+    assert "Min spanning fragments" in report
+    assert "Min supporting-fragment fraction" in report
+    assert "Min insert length" in report
+    assert "Min tandem length" in report
+    assert "Require in-frame insertions" in report
+    assert "VAF" not in report
     assert "Max mismatches" in report
     assert ">1<" in report
     assert "Representative alignment" in report
+    assert "Concordant Fragments" in report
+    assert "Single-mate Fragments" in report
+    assert "Discordant Fragments (excluded)" in report
+    assert "Unresolved Fragments (excluded)" in report
     assert "tandem sequence" in report
     assert "inserted sequence" in report
     assert "spacer sequence" in report
@@ -173,7 +201,10 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
 
 def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None:
     reference_path = tmp_path / "reference.fasta"
-    reference_path.write_text(">FLT3\nAAACCCGGGTTT\n", encoding="utf-8")
+    reference_path.write_text(
+        ">FLT3 exon 14-15 assay\nAAACCCGGGTTT\n",
+        encoding="utf-8",
+    )
     report_path = tmp_path / "calls.tsv"
 
     r1_path = tmp_path / "sample_R1.fastq"
@@ -195,9 +226,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     r2_path.write_text(
         (
             "@itd-fragment/2\n"
-            "AAACCCGGGTTT\n"
+            f"{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
             "AAACCCGGGTTT\n"
             "+\n"
@@ -236,22 +267,80 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Filter Reasons",
         "Mode",
         "Max Mismatches",
-        "Insertion Start",
-        "Tandem Start",
-        "Tandem End",
+        "Insertion After Reference Base (0-based; -1=before first)",
+        "Tandem Start (0-based)",
+        "Tandem End (0-based, inclusive)",
         "Tandem Sequence",
         "Spacer Prefix",
         "Spacer Suffix",
         "Insertion Sequence",
         "Read-Edge Observation",
-        "Support Count",
-        "Coverage",
-        "VAF",
-        "Min Support Count",
-        "Min Coverage",
-        "Min VAF",
+        "Supporting Fragment Count",
+        "Forward Support Count",
+        "Reverse Support Count",
+        "Spanning Fragment Count",
+        "Observed Supporting-fragment Fraction",
+        "Supporting/Spanning Fragments",
+        "Min Supporting Fragment Count",
+        "Min Spanning Fragment Count",
+        "Min Supporting-fragment Fraction",
+        "Max Single-direction Fraction",
+        "Min Directional Observations",
+        "Min Alignment Identity",
+        "Min On-target Fraction",
+        "Min Alignment Score",
+        "Reject Ambiguous Alignments",
+        "Min Junction Quality",
+        "Junction Flank Size",
+        "Min Adapter Match Length",
+        "Sample ID",
+        "Analysis Status",
+        "QC Status",
+        "Outcome",
+        "QC Reasons",
+        "Analysis Error",
+        "Input Fragment Count",
+        "Input Read Count",
+        "Forward Primer-retained Reads",
+        "Reverse Primer-retained Reads",
+        "Primer-failed Read Count",
+        "Length-failed Read Count",
+        "Quality-failed Read Count",
+        "Preprocessing-passing Read Count",
+        "Preprocessing-passing Forward Reads",
+        "Preprocessing-passing Reverse Reads",
+        "Usable Fragment Count",
+        "Alignment-attempted Read Count",
+        "Alignment-passing Read Count",
+        "Alignment-passing Forward Reads",
+        "Alignment-passing Reverse Reads",
+        "Alignment-passing Fragment Count",
+        "Alignment Pass Fraction",
+        "Minimum Inter-base Coverage",
+        "Median Inter-base Coverage",
+        "Maximum Inter-base Coverage",
+        "Passing Call Count",
+        "Filtered Candidate Count",
+        "QC Min Usable Fragments",
+        "QC Min Reads per Direction",
+        "QC Min Alignment Pass Fraction",
+        "QC Min Median Inter-base Coverage",
+        "QC Min Primer Retention Fraction",
+        "Concordant Fragment Count",
+        "Single-mate Fragment Count",
+        "Discordant Fragment Count",
+        "Unresolved Fragment Count",
+        "Reference FASTA Header",
+        "Reference Length",
+        "Reference Sequence SHA-256",
+        "Coordinate Convention",
+        "Tandem Orientation",
+        "Min Insert Length",
+        "Min Tandem Length",
+        "Require In-frame Insertions",
     ]
-    assert rows[1][1] == "PASS"
+    assert rows[1][1] == "FAIL"
+    assert rows[1][2] == "LOW_SUPPORT;LOW_COVERAGE"
     assert rows[1][3] == "fuzzy"
     assert rows[1][4] == "1"
     assert rows[1][5] == "8"
@@ -259,6 +348,167 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][7] == "8"
     assert rows[1][8] == "CCCGGG"
     assert rows[1][11] == "CCCGGA"
+    assert rows[1][14:16] == ["1", "1"]
+    assert rows[1][16:19] == [
+        "2",
+        "0.500000",
+        "1/2 spanning fragments",
+    ]
+    assert rows[1][31:36] == [
+        "sample",
+        "complete",
+        "fail",
+        "indeterminate",
+        "LOW_USABLE_FRAGMENT_COUNT;LOW_MEDIAN_INTERBASE_COVERAGE",
+    ]
+    assert rows[1][57:59] == ["0", "1"]
+    assert rows[1][64:68] == ["1", "0", "0", "0"]
+    assert rows[1][68:70] == ["FLT3 exon 14-15 assay", "12"]
+    assert rows[1][70] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
+    assert rows[1][71] == cli.COORDINATE_CONVENTION
+    assert rows[1][72] == "upstream"
+    assert rows[1][-3:] == ["6", "6", "Yes"]
+
+
+def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
+    tmp_path,
+    capsys,
+) -> None:
+    reference = "AAACCCGGGTTT"
+    reference_path = tmp_path / "reference.fasta"
+    reference_path.write_text(f">FLT3\n{reference}\n", encoding="utf-8")
+    r1_path = tmp_path / "negative_R1.fastq"
+    r2_path = tmp_path / "negative_R2.fastq"
+    records = "".join(
+        f"@fragment-{index}/1\n{reference}\n+\n{'I' * len(reference)}\n"
+        for index in range(10)
+    )
+    reverse_records = "".join(
+        f"@fragment-{index}/2\n{reference}\n+\n{'I' * len(reference)}\n"
+        for index in range(10)
+    )
+    r1_path.write_text(records, encoding="utf-8")
+    r2_path.write_text(reverse_records, encoding="utf-8")
+    html_path = tmp_path / "negative.html"
+    tsv_path = tmp_path / "negative.tsv"
+
+    assert cli.main(
+        [
+            "--reference",
+            str(reference_path),
+            "--r1",
+            str(r1_path),
+            "--r2",
+            str(r2_path),
+            "--min-read-length",
+            "12",
+            "--output",
+            str(html_path),
+            "--output-tsv",
+            str(tsv_path),
+        ]
+    ) == 0
+
+    assert capsys.readouterr().out == ""
+    report = html_path.read_text(encoding="utf-8")
+    assert "Sample Result and QC" in report
+    assert "negative" in report
+    assert "no passing ITD detected" in report
+    assert "No ITD candidates were called." in report
+    rows = list(
+        csv.reader(tsv_path.read_text(encoding="utf-8").splitlines(), delimiter="\t")
+    )
+    assert len(rows) == 2
+    assert rows[1][0] == "."
+    assert rows[1][31:36] == [
+        "negative",
+        "complete",
+        "pass",
+        "no passing ITD detected",
+        ".",
+    ]
+
+
+def test_cli_can_report_short_out_of_frame_tandem_when_explicitly_enabled(
+    tmp_path,
+) -> None:
+    reference = "GGGATGCCCTACTTT"
+    reference_path = tmp_path / "reference.fasta"
+    reference_path.write_text(f">FLT3\n{reference}\n", encoding="utf-8")
+    r1_path = tmp_path / "short_R1.fastq"
+    r2_path = tmp_path / "short_R2.fastq"
+    mutant = "GGGATGCCCACCCTACTTT"
+    r1_path.write_text(
+        f"@fragment/1\n{mutant}\n+\n{'I' * len(mutant)}\n",
+        encoding="utf-8",
+    )
+    r2_path.write_text(
+        f"@fragment/2\n{reverse_complement(reference)}\n+\n"
+        f"{'I' * len(reference)}\n",
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "short.tsv"
+
+    assert cli.main(
+        [
+            "--reference",
+            str(reference_path),
+            "--r1",
+            str(r1_path),
+            "--r2",
+            str(r2_path),
+            "--min-read-length",
+            "12",
+            "--min-insert-length",
+            "4",
+            "--min-tandem-length",
+            "3",
+            "--no-require-in-frame",
+            "--output-tsv",
+            str(report_path),
+        ]
+    ) == 0
+
+    rows = list(
+        csv.reader(
+            report_path.read_text(encoding="utf-8").splitlines(),
+            delimiter="\t",
+        )
+    )
+    assert rows[1][8] == "CCC"
+    assert rows[1][11] == "CCCA"
+    assert rows[1][-3:] == ["4", "3", "No"]
+
+
+def test_analysis_error_report_is_indeterminate(tmp_path) -> None:
+    reference_path = tmp_path / "reference.fasta"
+    reference_path.write_text(">FLT3\nAAACCCGGGTTT\n", encoding="utf-8")
+    r1_path = tmp_path / "broken_R1.fastq"
+    r2_path = tmp_path / "broken_R2.fastq"
+    r1_path.write_text("@broken/1\nAAACCC\n+\n", encoding="utf-8")
+    r2_path.write_text("", encoding="utf-8")
+    report_path = tmp_path / "error.html"
+
+    with pytest.raises(ValueError, match="incomplete"):
+        cli.main(
+            [
+                "--reference",
+                str(reference_path),
+                "--r1",
+                str(r1_path),
+                "--r2",
+                str(r2_path),
+                "--output",
+                str(report_path),
+            ]
+        )
+
+    report = report_path.read_text(encoding="utf-8")
+    assert "Analysis Status" in report
+    assert "error" in report
+    assert "indeterminate" in report
+    assert "ANALYSIS_ERROR" in report
+    assert "ITD calling did not complete" in report
 
 
 def test_call_command_trims_configured_primers(tmp_path, capsys) -> None:
@@ -428,13 +678,13 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     r2_path.write_text(
         (
             "@itd-fragment-1/2\n"
-            "TTTAAACCCGGGTTT\n"
+            f"{reverse_complement('TTTAAACCCGGGCCCGGGTTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@itd-fragment-2/2\n"
-            "TTTAAACCCGGGTTT\n"
+            f"{reverse_complement('TTCAAACCCGGGCCCGGGTTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
             "TTTAAACCCGGGTTT\n"
             "+\n"
@@ -475,8 +725,18 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     assert "orange" not in report
     assert "<h2>ITD 1</h2>" not in report
     assert "<h2>ITD 2</h2>" not in report
-    assert "Insertion Start" in report
-    assert "Support Count" in report
+    assert "Insertion After Reference Base (0-based)" in report
+    assert "Tandem Start (0-based)" in report
+    assert "Tandem End (0-based, inclusive)" in report
+    assert "Tandem Orientation" in report
+    assert "Reference and Coordinates" in report
+    assert "Reference FASTA Header" in report
+    assert "Reference Sequence SHA-256" in report
+    assert cli.COORDINATE_CONVENTION in report
+    assert "Supporting Fragments" in report
+    assert "Observed Supporting-fragment Fraction" in report
+    assert "66.7% (2/3 spanning fragments)" in report
+    assert "VAF" not in report
     assert "support pattern count 1" not in report
     assert "mismatches 0" not in report
     assert '<div class="signature">' not in report
@@ -531,8 +791,18 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
     )
 
     calls = [
-        ITDCall(itd=lower_itd, support_count=1, coverage=10, vaf=0.1),
-        ITDCall(itd=higher_itd, support_count=5, coverage=10, vaf=0.5),
+        ITDCall(
+            itd=lower_itd,
+            supporting_fragment_count=1,
+            spanning_fragment_count=10,
+            observed_supporting_fragment_fraction=0.1,
+        ),
+        ITDCall(
+            itd=higher_itd,
+            supporting_fragment_count=5,
+            spanning_fragment_count=10,
+            observed_supporting_fragment_fraction=0.5,
+        ),
     ]
     representatives = [
         UniqueSupportRepresentative(

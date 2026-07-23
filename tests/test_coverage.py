@@ -3,6 +3,8 @@ import pytest
 from itdiscover.coverage import (
     covered_reference_positions,
     interbase_coverage,
+    interbase_fragment_ids,
+    observed_supporting_fragment_fraction,
     spans_insertion_site,
     variant_allele_frequency,
 )
@@ -130,6 +132,9 @@ def test_interbase_coverage_counts_overlapping_mates_once_per_fragment() -> None
         4: 2,
         5: 2,
     }
+    assert interbase_fragment_ids(alignments)[2] == frozenset(
+        {"fragment-1", "fragment-2"}
+    )
 
 
 def test_spans_insertion_site_rejects_out_of_range_site() -> None:
@@ -145,18 +150,23 @@ def test_spans_insertion_site_rejects_out_of_range_site() -> None:
         spans_insertion_site(alignment, 3)
 
 
-def test_variant_allele_frequency_returns_fraction() -> None:
-    assert variant_allele_frequency(2, 8) == 0.25
-    assert variant_allele_frequency(0, 8) == 0.0
-    assert variant_allele_frequency(0, 0) == 0.0
+def test_observed_supporting_fragment_fraction_returns_fraction() -> None:
+    assert observed_supporting_fragment_fraction(2, 8) == 0.25
+    assert observed_supporting_fragment_fraction(0, 8) == 0.0
+    assert observed_supporting_fragment_fraction(0, 0) == 0.0
 
 
-def test_variant_allele_frequency_rejects_impossible_counts() -> None:
+def test_observed_supporting_fragment_fraction_rejects_impossible_counts() -> None:
     with pytest.raises(ValueError, match="must not be negative"):
-        variant_allele_frequency(-1, 10)
+        observed_supporting_fragment_fraction(-1, 10)
     with pytest.raises(ValueError, match="must not be negative"):
-        variant_allele_frequency(1, -10)
+        observed_supporting_fragment_fraction(1, -10)
     with pytest.raises(ValueError, match="must not exceed"):
-        variant_allele_frequency(11, 10)
+        observed_supporting_fragment_fraction(11, 10)
     with pytest.raises(ValueError, match="must not exceed"):
-        variant_allele_frequency(1, 0)
+        observed_supporting_fragment_fraction(1, 0)
+
+
+def test_variant_allele_frequency_compatibility_alias_is_deprecated() -> None:
+    with pytest.deprecated_call(match="not a validated VAF"):
+        assert variant_allele_frequency(2, 8) == 0.25

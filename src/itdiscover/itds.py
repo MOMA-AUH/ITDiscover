@@ -7,7 +7,6 @@ from .insertions import Insertion
 from .sequences import validate_sequence
 
 TandemOrientation = Literal["upstream", "downstream"]
-_MIN_COPIED_LENGTH = 6
 
 
 @dataclass(frozen=True)
@@ -20,6 +19,18 @@ class ITD:
     orientation: TandemOrientation
     spacer_prefix: str = ""
     spacer_suffix: str = ""
+
+    def __post_init__(self) -> None:
+        expected_orientation = _tandem_orientation(
+            insertion_start=self.insertion.start,
+            tandem_start=self.tandem_start,
+            tandem_length=len(self.tandem_sequence),
+        )
+        if self.orientation != expected_orientation:
+            raise ValueError(
+                "orientation is inconsistent with the tandem interval and "
+                "insertion site"
+            )
 
     @property
     def tandem_end(self) -> int:
@@ -83,14 +94,24 @@ class _TandemMatch:
     mismatches: int
 
 
-def classify_exact_itd(insertion: Insertion, reference: str) -> ITD | None:
+def classify_exact_itd(
+    insertion: Insertion,
+    reference: str,
+    *,
+    min_tandem_length: int = 6,
+) -> ITD | None:
     """Classify an insertion as an adjacent exact tandem duplication.
 
     The copied reference tract must be immediately upstream or downstream of
     the insertion site. Extra inserted bases may flank that copied tract and
     are represented as spacer sequence.
     """
-    return classify_fuzzy_itd(insertion, reference, max_mismatches=0)
+    return classify_fuzzy_itd(
+        insertion,
+        reference,
+        max_mismatches=0,
+        min_tandem_length=min_tandem_length,
+    )
 
 
 def score_tandem_similarity(
@@ -115,17 +136,20 @@ def classify_fuzzy_itd(
     reference: str,
     *,
     max_mismatches: int,
+    min_tandem_length: int = 6,
 ) -> ITD | None:
     """Classify an insertion as a fuzzy-match tandem duplication with spacers."""
     if max_mismatches < 0:
         raise ValueError("max_mismatches must not be negative")
+    if min_tandem_length < 1:
+        raise ValueError("min_tandem_length must be at least 1")
 
     _validate_reference(reference)
     match = _best_adjacent_copied_match(
         insertion,
         reference,
         max_mismatches=max_mismatches,
-        min_copied_length=_MIN_COPIED_LENGTH,
+        min_copied_length=min_tandem_length,
     )
     if match is None:
         return None
@@ -263,10 +287,28 @@ def _itd_from_match(insertion: Insertion, match: _TandemMatch) -> ITD:
         insertion=insertion,
         tandem_start=match.tandem_start,
         tandem_sequence=match.tandem_sequence,
-        orientation="downstream",
+        orientation=_tandem_orientation(
+            insertion_start=insertion.start,
+            tandem_start=match.tandem_start,
+            tandem_length=len(match.tandem_sequence),
+        ),
         spacer_prefix=insertion.sequence[: match.insertion_start],
         spacer_suffix=insertion.sequence[match.insertion_end :],
     )
+
+
+def _tandem_orientation(
+    *,
+    insertion_start: int,
+    tandem_start: int,
+    tandem_length: int,
+) -> TandemOrientation:
+    tandem_end = tandem_start + tandem_length - 1
+    if tandem_end == insertion_start:
+        return "upstream"
+    if tandem_start == insertion_start + 1:
+        return "downstream"
+    raise ValueError("tandem interval is not adjacent to the insertion site")
 
 
 def _mismatch_count(observed: str, expected: str) -> int:
