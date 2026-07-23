@@ -47,7 +47,7 @@ def test_event_length_thresholds_must_be_positive(capsys) -> None:
     assert "at least 1" in capsys.readouterr().err
 
 
-def test_preferred_direction_filter_options_preserve_legacy_destinations() -> None:
+def test_preferred_options_preserve_legacy_destinations() -> None:
     args = cli.build_parser().parse_args(
         [
             "--reference",
@@ -60,11 +60,14 @@ def test_preferred_direction_filter_options_preserve_legacy_destinations() -> No
             "0.8",
             "--min-directional-opportunities",
             "7",
+            "--min-copied-segment-length",
+            "9",
         ]
     )
 
     assert args.max_single_direction_fraction == 0.8
     assert args.min_directional_observations == 7
+    assert args.min_tandem_length == 9
 
 
 def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> None:
@@ -190,7 +193,7 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Max directional mutant-fraction share" in report
     assert "Min opportunities per direction" in report
     assert "Min insert length" in report
-    assert "Min tandem length" in report
+    assert "Min copied-segment length" in report
     assert "Require in-frame insertions" in report
     assert "VAF" not in report
     assert "Max mismatches" in report
@@ -205,7 +208,7 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "R1 Evidence" in report
     assert "R2 Evidence" in report
     assert "50.0% (1/2 opportunities)" in report
-    assert "tandem sequence" in report
+    assert "copied reference segment" in report
     assert "inserted sequence" in report
     assert "spacer sequence" in report
     assert "mismatches" in report
@@ -295,9 +298,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Mode",
         "Max Mismatches",
         "Insertion After Reference Base (0-based; -1=before first)",
-        "Tandem Start (0-based)",
-        "Tandem End (0-based, inclusive)",
-        "Tandem Sequence",
+        "Copied Segment Start (0-based)",
+        "Copied Segment End (0-based, inclusive)",
+        "Copied Segment Sequence",
         "Spacer Prefix",
         "Spacer Suffix",
         "Insertion Sequence",
@@ -367,9 +370,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Reference Length",
         "Reference Sequence SHA-256",
         "Coordinate Convention",
-        "Tandem Orientation",
+        "Copied Segment Location",
         "Min Insert Length",
-        "Min Tandem Length",
+        "Min Copied Segment Length",
         "Require In-frame Insertions",
     ]
     assert rows[1][1] == "FAIL"
@@ -408,7 +411,7 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][74:76] == ["FLT3 exon 14-15 assay", "12"]
     assert rows[1][76] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
     assert rows[1][77] == cli.COORDINATE_CONVENTION
-    assert rows[1][78] == "upstream"
+    assert rows[1][78] == "immediately before insertion"
     assert rows[1][-3:] == ["6", "6", "Yes"]
 
 
@@ -760,7 +763,7 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
     assert 'class="legend-chip diff"' in report
-    assert "tandem sequence" in report
+    assert "copied reference segment" in report
     assert "mismatches" in report
     assert "sky blue" not in report
     assert "teal green" not in report
@@ -768,9 +771,11 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     assert "<h2>ITD 1</h2>" not in report
     assert "<h2>ITD 2</h2>" not in report
     assert "Insertion After Reference Base (0-based)" in report
-    assert "Tandem Start (0-based)" in report
-    assert "Tandem End (0-based, inclusive)" in report
-    assert "Tandem Orientation" in report
+    assert "Copied Segment Start (0-based)" in report
+    assert "Copied Segment End (0-based, inclusive)" in report
+    assert "Copied Segment Location" in report
+    assert "Immediately after the insertion" in report
+    assert "Tandem Orientation" not in report
     assert "Reference and Coordinates" in report
     assert "Reference FASTA Header" in report
     assert "Reference Sequence SHA-256" in report
@@ -817,7 +822,6 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
         ),
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
     )
     lower_itd = ITD(
         insertion=Insertion(
@@ -829,7 +833,6 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
         ),
         tandem_start=9,
         tandem_sequence="TTT",
-        orientation="downstream",
     )
 
     calls = [
@@ -894,7 +897,6 @@ def test_alignment_difference_classes_do_not_color_indels_yellow() -> None:
         ),
         tandem_start=9,
         tandem_sequence="GGG",
-        orientation="downstream",
     )
     deletion = Alignment(
         read_id="deletion-read",
@@ -937,7 +939,6 @@ def test_alignment_difference_classes_color_spacers_and_inserted_sequence() -> N
         ),
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
         spacer_prefix="NNN",
         spacer_suffix="NN",
     )

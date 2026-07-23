@@ -563,7 +563,6 @@ def _representative_itd(
             itd.tandem_start,
             itd.insertion.start,
             itd.insertion.sequence,
-            itd.orientation,
             itd.insertion.read_id,
             itd.insertion.fragment_id,
             itd.insertion.direction,

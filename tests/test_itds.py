@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from itdiscover.insertions import Insertion
@@ -17,7 +19,7 @@ def Insertion(**kwargs):
     return _Insertion(**kwargs)
 
 
-def test_classifies_exact_upstream_tandem_duplication_without_rewriting_breakpoint() -> None:
+def test_classifies_copy_before_insertion_without_rewriting_breakpoint() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=8,
@@ -25,15 +27,18 @@ def test_classifies_exact_upstream_tandem_duplication_without_rewriting_breakpoi
         direction="forward",
     )
 
-    assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
+    itd = classify_exact_itd(insertion, "AAACCCGGGTTT")
+
+    assert itd is not None
+    assert itd == ITD(
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="upstream",
     )
+    assert itd.copied_segment_location == "before"
 
 
-def test_classifies_exact_downstream_tandem_duplication() -> None:
+def test_classifies_copy_after_insertion() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
@@ -41,12 +46,36 @@ def test_classifies_exact_downstream_tandem_duplication() -> None:
         direction="reverse",
     )
 
-    assert classify_exact_itd(insertion, "AAACCCGGGTTT") == ITD(
+    itd = classify_exact_itd(insertion, "AAACCCGGGTTT")
+
+    assert itd is not None
+    assert itd == ITD(
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
     )
+    assert itd.copied_segment_location == "after"
+
+
+def test_reports_copied_segment_from_full_length_flt3_reference() -> None:
+    reference_path = (
+        Path(__file__).parent / "data" / "synthetic_flt3" / "reference.fa"
+    )
+    reference = "".join(reference_path.read_text().splitlines()[1:])
+    insertion = Insertion(
+        read_id="flt3-example",
+        start=78,
+        sequence="AGAGAATATGAATAT",
+        direction="forward",
+    )
+
+    itd = classify_exact_itd(insertion, reference)
+
+    assert itd is not None
+    assert itd.copied_segment_start == 79
+    assert itd.copied_segment_end == 93
+    assert itd.copied_segment_sequence == "AGAGAATATGAATAT"
+    assert itd.copied_segment_location == "after"
 
 
 def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
@@ -61,11 +90,10 @@ def test_uses_most_five_prime_source_interval_when_both_sides_match() -> None:
         insertion=insertion,
         tandem_start=0,
         tandem_sequence="AAAAAA",
-        orientation="upstream",
     )
 
 
-def test_uses_adjacent_downstream_source_for_leading_repetitive_itd() -> None:
+def test_uses_copy_after_insertion_for_leading_repetitive_itd() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=0,
@@ -77,7 +105,6 @@ def test_uses_adjacent_downstream_source_for_leading_repetitive_itd() -> None:
         insertion=insertion,
         tandem_start=1,
         tandem_sequence="AAAAAA",
-        orientation="downstream",
     )
 
 
@@ -93,7 +120,6 @@ def test_classifies_exact_tandem_with_spacers_on_both_sides() -> None:
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
         spacer_prefix="NNN",
         spacer_suffix="NN",
     )
@@ -159,16 +185,16 @@ def test_itd_reports_inclusive_tandem_end_and_length() -> None:
         ),
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="upstream",
     )
 
     assert itd.tandem_end == 8
+    assert itd.copied_segment_location == "before"
     assert itd.length == 6
     assert itd.spacer_sequence == ""
     assert itd.spacer_length == 0
 
 
-def test_itd_rejects_incorrect_or_nonadjacent_orientation_semantics() -> None:
+def test_itd_derives_location_and_validates_legacy_orientation() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=8,
@@ -188,7 +214,6 @@ def test_itd_rejects_incorrect_or_nonadjacent_orientation_semantics() -> None:
             insertion=insertion,
             tandem_start=0,
             tandem_sequence="CCC",
-            orientation="upstream",
         )
 
 
@@ -260,13 +285,12 @@ def test_classifies_exact_tandem_with_longest_copied_segment_and_spacers() -> No
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGGTTT",
-        orientation="downstream",
         spacer_prefix="",
         spacer_suffix="AAAA",
     )
 
 
-def test_classifies_fuzzy_downstream_tandem_duplication_with_one_mismatch() -> None:
+def test_classifies_fuzzy_copy_after_insertion_with_one_mismatch() -> None:
     insertion = Insertion(
         read_id="read-1",
         start=2,
@@ -282,7 +306,6 @@ def test_classifies_fuzzy_downstream_tandem_duplication_with_one_mismatch() -> N
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
     )
 
 
@@ -302,7 +325,6 @@ def test_classifies_fuzzy_tandem_with_spacers_when_exact_match_exists() -> None:
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )
@@ -346,7 +368,6 @@ def test_uses_most_five_prime_window_when_fuzzy_candidates_tie() -> None:
         insertion=insertion,
         tandem_start=0,
         tandem_sequence="AAAAAA",
-        orientation="upstream",
     )
 
 
@@ -366,7 +387,6 @@ def test_classifies_fuzzy_tandem_with_spacers_and_mismatch_in_copied_segment() -
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )
@@ -401,7 +421,6 @@ def test_minimum_tandem_length_is_configurable_for_three_base_duplication() -> N
         insertion=insertion,
         tandem_start=3,
         tandem_sequence="CCC",
-        orientation="downstream",
     )
 
 

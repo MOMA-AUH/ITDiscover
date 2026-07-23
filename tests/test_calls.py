@@ -59,7 +59,6 @@ def test_itd_call_rejects_fraction_inconsistent_with_fragment_counts() -> None:
         insertion=make_insertion("read", start=2, sequence="CCCGGG"),
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
     )
 
     with pytest.raises(ValueError, match="must equal"):
@@ -109,7 +108,6 @@ def test_call_exact_itds_reports_supporting_and_spanning_fragment_fraction() -> 
                 ),
                 tandem_start=3,
                 tandem_sequence="CCCGGG",
-                orientation="upstream",
             ),
             supporting_fragment_count=3,
             spanning_fragment_count=10,
@@ -493,7 +491,7 @@ def test_call_exact_itds_combines_equivalent_gap_placements() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
-            f"upstream-representation-{index}",
+            f"right-gap-representation-{index}",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGG------TTT",
@@ -501,7 +499,7 @@ def test_call_exact_itds_combines_equivalent_gap_placements() -> None:
         for index in range(1, 3)
     ] + [
         make_alignment(
-            f"downstream-representation-{index}",
+            f"left-gap-representation-{index}",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGGCCCGGGTTT",
             "AAA------CCCGGGTTT",
@@ -544,13 +542,13 @@ def test_call_exact_itds_canonical_identity_is_independent_of_input_order() -> N
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
-            "upstream-breakpoint",
+            "right-gap-breakpoint",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGG------TTT",
         ),
         make_alignment(
-            "downstream-breakpoint",
+            "left-gap-breakpoint",
             "AAACCCGGGCCCGGGTTT",
             "AAACCCGGGCCCGGGTTT",
             "AAA------CCCGGGTTT",
@@ -1207,7 +1205,6 @@ def test_call_fuzzy_itds_groups_spacer_itd_reads_with_copied_segment_mismatches(
         ),
         tandem_start=3,
         tandem_sequence="CCCGGG",
-        orientation="downstream",
         spacer_prefix="TTA",
         spacer_suffix="ACT",
     )

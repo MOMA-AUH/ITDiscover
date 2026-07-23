@@ -113,25 +113,37 @@ distinguished from an inadequate assay and from an adequate no-call sample.
 Reports identify the reference by its complete FASTA header, sequence length,
 and SHA-256 digest. All reported coordinates are zero-based and local to that
 reference. The insertion coordinate is the reference base immediately before
-the insertion (`-1` means before the first base); tandem start is zero-based and
-tandem end is zero-based and inclusive. Tandem orientation is `upstream` when
-the copied reference interval ends at the insertion coordinate and `downstream`
-when it begins at the following reference base.
+the insertion (`-1` means before the first base). The copied segment start is
+zero-based and its end is zero-based and inclusive. Reports state directly
+whether that segment is immediately before or immediately after the insertion.
+This is a description of the displayed coordinates, not a claim about the
+biological direction of copying. In repetitive sequence, the same ALT sequence
+can permit more than one equivalent gap placement. ITDiscover groups those
+placements as one canonical allele before counting fragments; the
+before/after label only explains the selected report representation.
+
+For example, the bundled full-length FLT3 example contains an insertion after
+reference base 78. The inserted sequence `AGAGAATATGAATAT` copies reference
+bases 79–93, so the report says that the copied segment is immediately after
+the insertion. These coordinates and bases come from
+`tests/data/synthetic_flt3/reference.fa`, not from a toy repeat.
 
 ## Event-length and frame policy
 
 `--min-insert-length` controls the shortest observed insertion considered.
-`--min-tandem-length` independently controls the shortest copied adjacent
-reference tract accepted as an ITD. When omitted, the tandem minimum follows
-the insertion minimum, so `--min-insert-length 3` can call a genuine 3-base
-duplication instead of retaining a hidden 6-base floor.
+`--min-copied-segment-length` independently controls the shortest copied
+adjacent reference segment accepted as an ITD. The legacy
+`--min-tandem-length` spelling remains accepted. When omitted, the copied
+segment minimum follows the insertion minimum, so `--min-insert-length 3` can
+call a genuine 3-base duplication instead of retaining a hidden 6-base floor.
 
 Fully observed insertions are required to have total inserted length divisible
 by three by default. This narrow FLT3-ITD policy is explicit and can be disabled
 with `--no-require-in-frame` when exploratory or assay-specific analysis should
 retain out-of-frame candidates. Read-edge/partial observations cannot establish
 the full event frame and remain handled as partial evidence. The insertion
-minimum, tandem minimum, and frame policy are recorded in HTML and TSV output.
+minimum, copied-segment minimum, and frame policy are recorded in HTML and TSV
+output.
 Changing these settings changes the reportable candidate space; it does not by
 itself validate short or out-of-frame events for clinical interpretation.
 

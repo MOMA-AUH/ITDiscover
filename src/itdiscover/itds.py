@@ -1,41 +1,79 @@
 """FLT3 internal tandem duplication classification."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .insertions import Insertion
 from .sequences import validate_sequence
 
 TandemOrientation = Literal["upstream", "downstream"]
+CopiedSegmentLocation = Literal["before", "after"]
 
 
 @dataclass(frozen=True)
 class ITD:
-    """An insertion classified as an internal tandem duplication."""
+    """An insertion containing a copy of an adjacent reference segment."""
 
     insertion: Insertion
     tandem_start: int
     tandem_sequence: str
-    orientation: TandemOrientation
+    orientation: TandemOrientation | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
     spacer_prefix: str = ""
     spacer_suffix: str = ""
 
     def __post_init__(self) -> None:
-        expected_orientation = _tandem_orientation(
-            insertion_start=self.insertion.start,
-            tandem_start=self.tandem_start,
-            tandem_length=len(self.tandem_sequence),
+        expected_orientation: TandemOrientation = (
+            "upstream"
+            if self.copied_segment_location == "before"
+            else "downstream"
         )
-        if self.orientation != expected_orientation:
+        if (
+            self.orientation is not None
+            and self.orientation != expected_orientation
+        ):
             raise ValueError(
-                "orientation is inconsistent with the tandem interval and "
+                "orientation is inconsistent with the copied interval and "
                 "insertion site"
             )
+        object.__setattr__(self, "orientation", expected_orientation)
 
     @property
     def tandem_end(self) -> int:
         """Return the inclusive end coordinate of the duplicated WT segment."""
         return self.tandem_start + len(self.tandem_sequence) - 1
+
+    @property
+    def copied_segment_start(self) -> int:
+        """Return the zero-based start of the copied reference segment."""
+        return self.tandem_start
+
+    @property
+    def copied_segment_end(self) -> int:
+        """Return the inclusive end of the copied reference segment."""
+        return self.tandem_end
+
+    @property
+    def copied_segment_sequence(self) -> str:
+        """Return the reference sequence copied into the insertion."""
+        return self.tandem_sequence
+
+    @property
+    def copied_segment_length(self) -> int:
+        """Return the length of the copied reference segment."""
+        return self.length
+
+    @property
+    def copied_segment_location(self) -> CopiedSegmentLocation:
+        """Return whether the copied interval is before or after the insertion."""
+        if self.tandem_end == self.insertion.start:
+            return "before"
+        if self.tandem_start == self.insertion.start + 1:
+            return "after"
+        raise ValueError("copied reference interval is not adjacent to insertion")
 
     @property
     def length(self) -> int:
@@ -102,9 +140,9 @@ def classify_exact_itd(
 ) -> ITD | None:
     """Classify an insertion as an adjacent exact tandem duplication.
 
-    The copied reference tract must be immediately upstream or downstream of
-    the insertion site. Extra inserted bases may flank that copied tract and
-    are represented as spacer sequence.
+    The copied reference tract must be immediately before or after the
+    insertion site. Extra inserted bases may flank that copied tract and are
+    represented as spacer sequence.
     """
     return classify_fuzzy_itd(
         insertion,
@@ -234,14 +272,6 @@ def _best_fuzzy_tandem_match(
     return best_match
 
 
-def _is_adjacent_tandem_start(insertion: Insertion, tandem_start: int) -> bool:
-    sequence_length = len(insertion.sequence)
-    return tandem_start in (
-        insertion.start - sequence_length + 1,
-        insertion.start + 1,
-    )
-
-
 def _adjacent_tandem_starts(insertion_start: int, copied_length: int) -> tuple[int, int]:
     return (
         insertion_start - copied_length + 1,
@@ -249,66 +279,14 @@ def _adjacent_tandem_starts(insertion_start: int, copied_length: int) -> tuple[i
     )
 
 
-def _adjacent_tandem_candidates(
-    insertion: Insertion,
-    reference: str,
-) -> list[tuple[TandemOrientation, str, int]]:
-    sequence = insertion.sequence
-    candidates: list[tuple[TandemOrientation, str, int]] = []
-
-    upstream_start = insertion.start - len(sequence) + 1
-    if upstream_start >= 0:
-        upstream_sequence = reference[upstream_start : insertion.start + 1]
-        candidates.append(
-            (
-                "upstream",
-                upstream_sequence,
-                _mismatch_count(sequence, upstream_sequence),
-            )
-        )
-
-    downstream_start = insertion.start + 1
-    downstream_end = downstream_start + len(sequence)
-    if downstream_end <= len(reference):
-        downstream_sequence = reference[downstream_start:downstream_end]
-        candidates.append(
-            (
-                "downstream",
-                downstream_sequence,
-                _mismatch_count(sequence, downstream_sequence),
-            )
-        )
-
-    return candidates
-
-
 def _itd_from_match(insertion: Insertion, match: _TandemMatch) -> ITD:
     return ITD(
         insertion=insertion,
         tandem_start=match.tandem_start,
         tandem_sequence=match.tandem_sequence,
-        orientation=_tandem_orientation(
-            insertion_start=insertion.start,
-            tandem_start=match.tandem_start,
-            tandem_length=len(match.tandem_sequence),
-        ),
         spacer_prefix=insertion.sequence[: match.insertion_start],
         spacer_suffix=insertion.sequence[match.insertion_end :],
     )
-
-
-def _tandem_orientation(
-    *,
-    insertion_start: int,
-    tandem_start: int,
-    tandem_length: int,
-) -> TandemOrientation:
-    tandem_end = tandem_start + tandem_length - 1
-    if tandem_end == insertion_start:
-        return "upstream"
-    if tandem_start == insertion_start + 1:
-        return "downstream"
-    raise ValueError("tandem interval is not adjacent to the insertion site")
 
 
 def _mismatch_count(observed: str, expected: str) -> int:

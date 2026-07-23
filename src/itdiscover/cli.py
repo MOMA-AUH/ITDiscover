@@ -40,10 +40,12 @@ from .results import (
 
 COORDINATE_CONVENTION = (
     "Reference-local, zero-based. Insertion coordinate is the reference base "
-    "immediately before the insertion (-1 means before the first base). Tandem "
-    "start is zero-based; tandem end is zero-based and inclusive. Tandem "
-    "orientation is upstream when the copied interval ends at the insertion "
-    "coordinate and downstream when it starts at the following reference base."
+    "immediately before the insertion (-1 means before the first base). Copied "
+    "segment start is zero-based; copied segment end is zero-based and inclusive. "
+    "The copied segment is immediately before the insertion when it ends at the "
+    "insertion coordinate, and immediately after when it starts at the following "
+    "reference base. Before/after describes this coordinate representation, not "
+    "a biological direction of copying."
 )
 
 
@@ -121,10 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum insertion length to consider.",
     )
     parser.add_argument(
+        "--min-copied-segment-length",
         "--min-tandem-length",
+        dest="min_tandem_length",
         type=_positive_int,
         help=(
-            "Minimum copied tandem-tract length; defaults to --min-insert-length."
+            "Minimum copied reference-segment length; defaults to "
+            "--min-insert-length."
         ),
     )
     parser.add_argument(
@@ -140,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-mismatches",
         type=_non_negative_int,
         help=(
-            "Maximum mismatches allowed in the copied tandem tract; "
+            "Maximum mismatches allowed in the copied reference segment; "
             "0 is equivalent to exact mode."
         ),
     )
@@ -219,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Reject reads whose optimal alignments imply different normalized "
-            "sequence events. Equivalent tandem-gap placements are retained."
+            "sequence events. Equivalent insertion-gap placements are retained."
         ),
     )
     parser.add_argument(
@@ -974,7 +979,7 @@ def _write_unique_support_alignment_html_report(
   R2; it is not evaluated unless both directions meet the configured
   opportunity threshold.</p>
   <div class="legend">
-    <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
+    <span class="legend-item"><span class="legend-chip tandem-region">C</span> copied reference segment</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
     <span class="legend-item"><span class="legend-chip spacer-region">S</span> spacer sequence</span>
     <span class="legend-item"><span class="legend-chip diff">A</span> mismatches</span>
@@ -1040,9 +1045,9 @@ def _write_tsv_call_report(
                 "Mode",
                 "Max Mismatches",
                 "Insertion After Reference Base (0-based; -1=before first)",
-                "Tandem Start (0-based)",
-                "Tandem End (0-based, inclusive)",
-                "Tandem Sequence",
+                "Copied Segment Start (0-based)",
+                "Copied Segment End (0-based, inclusive)",
+                "Copied Segment Sequence",
                 "Spacer Prefix",
                 "Spacer Suffix",
                 "Insertion Sequence",
@@ -1112,9 +1117,9 @@ def _write_tsv_call_report(
                 "Reference Length",
                 "Reference Sequence SHA-256",
                 "Coordinate Convention",
-                "Tandem Orientation",
+                "Copied Segment Location",
                 "Min Insert Length",
-                "Min Tandem Length",
+                "Min Copied Segment Length",
                 "Require In-frame Insertions",
             ]
         )
@@ -1128,9 +1133,9 @@ def _write_tsv_call_report(
                     mode,
                     max_mismatches,
                     call.itd.insertion.start,
-                    call.itd.tandem_start,
-                    call.itd.tandem_end,
-                    call.itd.tandem_sequence,
+                    call.itd.copied_segment_start,
+                    call.itd.copied_segment_end,
+                    call.itd.copied_segment_sequence,
                     call.itd.spacer_prefix or "-",
                     call.itd.spacer_suffix or "-",
                     call.itd.insertion.sequence,
@@ -1209,7 +1214,7 @@ def _write_tsv_call_report(
                     reference_length if reference_length is not None else ".",
                     reference_sha256 or ".",
                     COORDINATE_CONVENTION,
-                    call.itd.orientation,
+                    f"immediately {call.itd.copied_segment_location} insertion",
                     min_insert_length,
                     min_tandem_length,
                     "Yes" if require_in_frame else "No",
@@ -1482,7 +1487,7 @@ def _render_html_thresholds_section(
         [
             ("Max mismatches", str(max_mismatches)),
             ("Min insert length", str(min_insert_length)),
-            ("Min tandem length", str(min_tandem_length)),
+            ("Min copied-segment length", str(min_tandem_length)),
             ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
         ]
     )
@@ -1577,10 +1582,16 @@ def _render_html_call_section(
             'Insertion After Reference Base (0-based)',
             str(call.itd.insertion.start),
         ),
-        ('Tandem Start (0-based)', str(call.itd.tandem_start)),
-        ('Tandem End (0-based, inclusive)', str(call.itd.tandem_end)),
-        ('Tandem Orientation', call.itd.orientation),
-        ('Sequence', call.itd.tandem_sequence),
+        ('Copied Segment Start (0-based)', str(call.itd.copied_segment_start)),
+        (
+            'Copied Segment End (0-based, inclusive)',
+            str(call.itd.copied_segment_end),
+        ),
+        (
+            'Copied Segment Location',
+            f"Immediately {call.itd.copied_segment_location} the insertion",
+        ),
+        ('Copied Segment Sequence', call.itd.copied_segment_sequence),
         ('Spacer Prefix', call.itd.spacer_prefix or "-"),
         ('Spacer Suffix', call.itd.spacer_suffix or "-"),
         (
