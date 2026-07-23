@@ -47,6 +47,26 @@ def test_event_length_thresholds_must_be_positive(capsys) -> None:
     assert "at least 1" in capsys.readouterr().err
 
 
+def test_preferred_direction_filter_options_preserve_legacy_destinations() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "--reference",
+            "reference.fasta",
+            "--r1",
+            "r1.fastq",
+            "--r2",
+            "r2.fastq",
+            "--max-directional-mutant-fraction-share",
+            "0.8",
+            "--min-directional-opportunities",
+            "7",
+        ]
+    )
+
+    assert args.max_single_direction_fraction == 0.8
+    assert args.min_directional_observations == 7
+
+
 def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> None:
     reference_path = tmp_path / "reference.fasta"
     reference_path.write_text(">FLT3\nAAACCCGGGTTT\n", encoding="utf-8")
@@ -167,6 +187,8 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Min mutant fragments" in report
     assert "Min informative fragments" in report
     assert "Min mutant-fragment fraction" in report
+    assert "Max directional mutant-fraction share" in report
+    assert "Min opportunities per direction" in report
     assert "Min insert length" in report
     assert "Min tandem length" in report
     assert "Require in-frame insertions" in report
@@ -180,6 +202,9 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert "Unresolved Fragments" in report
     assert "Wild-type Fragments" in report
     assert "Not-informative Fragments" in report
+    assert "R1 Evidence" in report
+    assert "R2 Evidence" in report
+    assert "50.0% (1/2 opportunities)" in report
     assert "tandem sequence" in report
     assert "inserted sequence" in report
     assert "spacer sequence" in report
@@ -278,16 +303,20 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Insertion Sequence",
         "Read-Edge Observation",
         "Mutant Fragment Count",
-        "Forward Support Count",
-        "Reverse Support Count",
+        "R1 Mutant Count",
+        "R1 Opportunity Count",
+        "R1 Mutant Fraction",
+        "R2 Mutant Count",
+        "R2 Opportunity Count",
+        "R2 Mutant Fraction",
         "Informative Fragment Count",
         "Observed Mutant-fragment Fraction",
         "Mutant/Informative Fragments",
         "Min Mutant Fragment Count",
         "Min Informative Fragment Count",
         "Min Mutant-fragment Fraction",
-        "Max Single-direction Fraction",
-        "Min Directional Observations",
+        "Max Directional Mutant-fraction Share",
+        "Min Opportunities per Direction",
         "Min Alignment Identity",
         "Min On-target Fraction",
         "Min Alignment Score",
@@ -354,25 +383,32 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][7] == "8"
     assert rows[1][8] == "CCCGGG"
     assert rows[1][11] == "CCCGGA"
-    assert rows[1][14:16] == ["1", "1"]
-    assert rows[1][16:19] == [
+    assert rows[1][14:20] == [
+        "1",
+        "2",
+        "0.500000",
+        "1",
+        "2",
+        "0.500000",
+    ]
+    assert rows[1][20:23] == [
         "2",
         "0.500000",
         "1/2 informative fragments",
     ]
-    assert rows[1][31:36] == [
+    assert rows[1][35:40] == [
         "sample",
         "complete",
         "fail",
         "indeterminate",
         "LOW_USABLE_FRAGMENT_COUNT;LOW_MEDIAN_INTERBASE_COVERAGE",
     ]
-    assert rows[1][57:59] == ["0", "1"]
-    assert rows[1][64:70] == ["1", "0", "0", "0", "1", "0"]
-    assert rows[1][70:72] == ["FLT3 exon 14-15 assay", "12"]
-    assert rows[1][72] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
-    assert rows[1][73] == cli.COORDINATE_CONVENTION
-    assert rows[1][74] == "upstream"
+    assert rows[1][61:63] == ["0", "1"]
+    assert rows[1][68:74] == ["1", "0", "0", "0", "1", "0"]
+    assert rows[1][74:76] == ["FLT3 exon 14-15 assay", "12"]
+    assert rows[1][76] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
+    assert rows[1][77] == cli.COORDINATE_CONVENTION
+    assert rows[1][78] == "upstream"
     assert rows[1][-3:] == ["6", "6", "Yes"]
 
 
@@ -426,7 +462,7 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
     )
     assert len(rows) == 2
     assert rows[1][0] == "."
-    assert rows[1][31:36] == [
+    assert rows[1][35:40] == [
         "negative",
         "complete",
         "pass",

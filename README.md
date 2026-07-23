@@ -60,6 +60,17 @@ fragments have one mutant mate without high-quality contradictory wild-type
 evidence from the other mate. Both are subcategories of `mutant` and each
 fragment is counted only once.
 
+R1/R2 direction bias is evaluated using observation opportunities rather than
+raw mutant counts. For each direction, an opportunity is a read that covers the
+candidate junction well enough to be classified as high-quality mutant or wild
+type. The direction-specific mutant fraction is
+`mutant observations / opportunities`. ITDiscover divides the larger of the
+two directional fractions by their sum and compares that share with the
+configured maximum. It does this only when both directions have at least the
+configured number of opportunities. Therefore, an ITD near a read edge is not
+called direction-biased merely because only one read direction can reach its
+junction.
+
 This post-filter fragment fraction does not collapse PCR duplicates or UMIs,
 correct amplification bias, or estimate a clinically validated VAF or allelic
 ratio. It must not be interpreted as interchangeable with capillary

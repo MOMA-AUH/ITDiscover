@@ -36,6 +36,8 @@ class ITDCall:
     filter_reasons: tuple[str, ...] = ()
     forward_support_count: int = field(default=0, compare=False)
     reverse_support_count: int = field(default=0, compare=False)
+    forward_opportunity_count: int | None = field(default=None, compare=False)
+    reverse_opportunity_count: int | None = field(default=None, compare=False)
     concordant_fragment_count: int = field(default=0, compare=False)
     single_mate_fragment_count: int = field(default=0, compare=False)
     discordant_fragment_count: int = field(default=0, compare=False)
@@ -58,12 +60,32 @@ class ITDCall:
                 "wild_type_fragment_count",
                 wild_type_count,
             )
+        forward_opportunity_count = self.forward_opportunity_count
+        if forward_opportunity_count is None:
+            forward_opportunity_count = self.forward_support_count
+            object.__setattr__(
+                self,
+                "forward_opportunity_count",
+                forward_opportunity_count,
+            )
+        reverse_opportunity_count = self.reverse_opportunity_count
+        if reverse_opportunity_count is None:
+            reverse_opportunity_count = self.reverse_support_count
+            object.__setattr__(
+                self,
+                "reverse_opportunity_count",
+                reverse_opportunity_count,
+            )
         counts = (
             self.supporting_fragment_count,
             wild_type_count,
             self.discordant_fragment_count,
             self.unresolved_fragment_count,
             self.not_informative_fragment_count,
+            self.forward_support_count,
+            self.reverse_support_count,
+            forward_opportunity_count,
+            reverse_opportunity_count,
         )
         if any(count < 0 for count in counts):
             raise ValueError("fragment evidence counts must not be negative")
@@ -74,6 +96,16 @@ class ITDCall:
             raise ValueError(
                 "spanning_fragment_count must equal mutant plus wild-type "
                 "fragment counts"
+            )
+        if self.forward_support_count > forward_opportunity_count:
+            raise ValueError(
+                "forward_support_count must not exceed "
+                "forward_opportunity_count"
+            )
+        if self.reverse_support_count > reverse_opportunity_count:
+            raise ValueError(
+                "reverse_support_count must not exceed "
+                "reverse_opportunity_count"
             )
         expected_fraction = observed_supporting_fragment_fraction(
             self.supporting_fragment_count,
@@ -106,6 +138,22 @@ class ITDCall:
         return self.discordant_fragment_count
 
     @property
+    def forward_mutant_fraction(self) -> float | None:
+        """Return the mutant fraction among forward junction opportunities."""
+        opportunity_count = self.forward_opportunity_count
+        if not opportunity_count:
+            return None
+        return self.forward_support_count / opportunity_count
+
+    @property
+    def reverse_mutant_fraction(self) -> float | None:
+        """Return the mutant fraction among reverse junction opportunities."""
+        opportunity_count = self.reverse_opportunity_count
+        if not opportunity_count:
+            return None
+        return self.reverse_support_count / opportunity_count
+
+    @property
     def passes_filters(self) -> bool:
         """Return whether the call passes the configured thresholds."""
         return self.status == "PASS"
@@ -134,7 +182,12 @@ class ITDCall:
 
 @dataclass(frozen=True)
 class ITDFilter:
-    """Thresholds used to label exact-match ITD calls."""
+    """Thresholds used to label ITD calls.
+
+    The two direction-filter field names are retained for API compatibility.
+    They represent the maximum share of the two direction-specific mutant
+    fractions and the minimum opportunity count required in each direction.
+    """
 
     min_supporting_fragment_count: int = 3
     min_spanning_fragment_count: int = 10
@@ -185,6 +238,16 @@ class ITDFilter:
         )
         return self.min_observed_supporting_fragment_fraction
 
+    @property
+    def max_directional_mutant_fraction_share(self) -> float:
+        """Return the largest allowed share from either read direction."""
+        return self.max_single_direction_fraction
+
+    @property
+    def min_directional_opportunities(self) -> int:
+        """Return the minimum opportunities required in each direction."""
+        return self.min_directional_observations
+
 
 @dataclass(frozen=True)
 class UniqueSupportRepresentative:
@@ -227,6 +290,8 @@ class FragmentConsensusSupport:
     not_informative_fragment_ids: frozenset[str] = frozenset()
     forward_supporting_fragment_ids: frozenset[str] = frozenset()
     reverse_supporting_fragment_ids: frozenset[str] = frozenset()
+    forward_opportunity_fragment_ids: frozenset[str] = frozenset()
+    reverse_opportunity_fragment_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -335,6 +400,12 @@ def call_fuzzy_itds_with_representatives(
         )
         forward_support_count = len(consensus.forward_supporting_fragment_ids)
         reverse_support_count = len(consensus.reverse_supporting_fragment_ids)
+        forward_opportunity_count = len(
+            consensus.forward_opportunity_fragment_ids
+        )
+        reverse_opportunity_count = len(
+            consensus.reverse_opportunity_fragment_ids
+        )
         observed_fraction = observed_supporting_fragment_fraction(
             supporting_fragment_count,
             spanning_fragment_count,
@@ -346,6 +417,8 @@ def call_fuzzy_itds_with_representatives(
             partial_observation=representative.is_partial_observation,
             forward_support_count=forward_support_count,
             reverse_support_count=reverse_support_count,
+            forward_opportunity_count=forward_opportunity_count,
+            reverse_opportunity_count=reverse_opportunity_count,
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
             unresolved_fragment_count=len(consensus.unresolved_fragment_ids),
             wild_type_fragment_count=wild_type_fragment_count,
@@ -360,6 +433,8 @@ def call_fuzzy_itds_with_representatives(
             filter_reasons=filter_reasons,
             forward_support_count=forward_support_count,
             reverse_support_count=reverse_support_count,
+            forward_opportunity_count=forward_opportunity_count,
+            reverse_opportunity_count=reverse_opportunity_count,
             concordant_fragment_count=len(consensus.concordant_fragment_ids),
             single_mate_fragment_count=len(consensus.single_mate_fragment_ids),
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
@@ -417,6 +492,12 @@ def call_exact_itds_with_representatives(
         )
         forward_support_count = len(consensus.forward_supporting_fragment_ids)
         reverse_support_count = len(consensus.reverse_supporting_fragment_ids)
+        forward_opportunity_count = len(
+            consensus.forward_opportunity_fragment_ids
+        )
+        reverse_opportunity_count = len(
+            consensus.reverse_opportunity_fragment_ids
+        )
         observed_fraction = observed_supporting_fragment_fraction(
             supporting_fragment_count,
             spanning_fragment_count,
@@ -428,6 +509,8 @@ def call_exact_itds_with_representatives(
             partial_observation=representative.is_partial_observation,
             forward_support_count=forward_support_count,
             reverse_support_count=reverse_support_count,
+            forward_opportunity_count=forward_opportunity_count,
+            reverse_opportunity_count=reverse_opportunity_count,
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
             unresolved_fragment_count=len(consensus.unresolved_fragment_ids),
             wild_type_fragment_count=wild_type_fragment_count,
@@ -442,6 +525,8 @@ def call_exact_itds_with_representatives(
             filter_reasons=filter_reasons,
             forward_support_count=forward_support_count,
             reverse_support_count=reverse_support_count,
+            forward_opportunity_count=forward_opportunity_count,
+            reverse_opportunity_count=reverse_opportunity_count,
             concordant_fragment_count=len(consensus.concordant_fragment_ids),
             single_mate_fragment_count=len(consensus.single_mate_fragment_ids),
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
@@ -884,6 +969,8 @@ def _fragment_consensus_support(
             "not_informative": set(),
             "forward_supporting": set(),
             "reverse_supporting": set(),
+            "forward_opportunity": set(),
+            "reverse_opportunity": set(),
         }
         for key in all_keys
     }
@@ -915,8 +1002,6 @@ def _fragment_consensus_support(
             key = forward_key
             category_sets[key]["supporting"].add(fragment_id)
             category_sets[key]["concordant"].add(fragment_id)
-            category_sets[key]["forward_supporting"].add(fragment_id)
-            category_sets[key]["reverse_supporting"].add(fragment_id)
             continue
 
         key, _ = next(iter(forward_candidates or reverse_candidates))
@@ -941,7 +1026,6 @@ def _fragment_consensus_support(
         else:
             category_sets[key]["supporting"].add(fragment_id)
             category_sets[key]["single_mate"].add(fragment_id)
-            category_sets[key][f"{candidate_direction}_supporting"].add(fragment_id)
 
     all_fragment_ids = set(alignments_by_fragment_direction)
     evidence_states = (
@@ -983,6 +1067,36 @@ def _fragment_consensus_support(
             else:
                 categories["not_informative"].add(fragment_id)
 
+    for key, categories in category_sets.items():
+        informative_fragment_ids = (
+            categories["supporting"] | categories["wild_type"]
+        )
+        for fragment_id in informative_fragment_ids:
+            for direction in ("forward", "reverse"):
+                direction_candidates = candidates_by_fragment_direction[
+                    fragment_id
+                ].get(direction, set())
+                supports_candidate = any(
+                    candidate_key == key
+                    for candidate_key, _ in direction_candidates
+                )
+                direction_alignments = alignments_by_fragment_direction[
+                    fragment_id
+                ].get(direction, [])
+                supports_wild_type = any(
+                    _alignment_supports_wild_type_junction(
+                        alignment,
+                        key.start,
+                        reference,
+                        evidence_filter,
+                    )
+                    for alignment in direction_alignments
+                )
+                if supports_candidate:
+                    categories[f"{direction}_supporting"].add(fragment_id)
+                if supports_candidate or supports_wild_type:
+                    categories[f"{direction}_opportunity"].add(fragment_id)
+
     return {
         key: FragmentConsensusSupport(
             supporting_fragment_ids=frozenset(categories["supporting"]),
@@ -999,6 +1113,12 @@ def _fragment_consensus_support(
             ),
             reverse_supporting_fragment_ids=frozenset(
                 categories["reverse_supporting"]
+            ),
+            forward_opportunity_fragment_ids=frozenset(
+                categories["forward_opportunity"]
+            ),
+            reverse_opportunity_fragment_ids=frozenset(
+                categories["reverse_opportunity"]
             ),
         )
         for key, categories in category_sets.items()
@@ -1158,6 +1278,8 @@ def _call_filter_reasons(
     partial_observation: bool,
     forward_support_count: int,
     reverse_support_count: int,
+    forward_opportunity_count: int,
+    reverse_opportunity_count: int,
     discordant_fragment_count: int,
     unresolved_fragment_count: int,
     wild_type_fragment_count: int,
@@ -1181,13 +1303,24 @@ def _call_filter_reasons(
         reasons.append("LOW_INFORMATIVE_FRAGMENT_COUNT")
     if observed_fraction < filters.min_observed_supporting_fragment_fraction:
         reasons.append("LOW_MUTANT_FRAGMENT_FRACTION")
-    directional_observations = forward_support_count + reverse_support_count
-    if directional_observations >= filters.min_directional_observations:
-        largest_direction_fraction = max(
-            forward_support_count,
-            reverse_support_count,
-        ) / directional_observations
-        if largest_direction_fraction > filters.max_single_direction_fraction:
+    if (
+        forward_opportunity_count >= filters.min_directional_opportunities
+        and reverse_opportunity_count >= filters.min_directional_opportunities
+    ):
+        forward_mutant_fraction = (
+            forward_support_count / forward_opportunity_count
+        )
+        reverse_mutant_fraction = (
+            reverse_support_count / reverse_opportunity_count
+        )
+        summed_directional_fractions = (
+            forward_mutant_fraction + reverse_mutant_fraction
+        )
+        if summed_directional_fractions > 0 and (
+            max(forward_mutant_fraction, reverse_mutant_fraction)
+            / summed_directional_fractions
+            > filters.max_directional_mutant_fraction_share
+        ):
             reasons.append("DIRECTION_BIAS")
     return tuple(reasons)
 

@@ -175,19 +175,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-directional-mutant-fraction-share",
         "--max-single-direction-fraction",
+        dest="max_single_direction_fraction",
         type=_direction_fraction,
         default=0.90,
         help=(
-            "Largest allowed fraction of supporting directional observations "
-            "from R1 or R2 once the minimum observation count is reached."
+            "Largest allowed share of the two direction-specific mutant "
+            "fractions attributable to R1 or R2."
         ),
     )
     parser.add_argument(
+        "--min-directional-opportunities",
         "--min-directional-observations",
+        dest="min_directional_observations",
         type=_positive_int,
         default=5,
-        help="Minimum R1/R2 supporting observations for direction-bias filtering.",
+        help=(
+            "Minimum callable junction opportunities required in each "
+            "direction before direction-bias filtering."
+        ),
     )
     parser.add_argument(
         "--min-alignment-identity",
@@ -580,6 +587,19 @@ def _format_filter_reasons(call: ITDCall) -> str:
     return "." if not call.filter_reasons else ";".join(call.filter_reasons)
 
 
+def _format_directional_evidence(
+    mutant_count: int,
+    opportunity_count: int | None,
+) -> str:
+    """Format one direction's mutant count, opportunities, and fraction."""
+    if opportunity_count in (None, 0):
+        return "not evaluable (0 opportunities)"
+    return (
+        f"{mutant_count / opportunity_count:.1%} "
+        f"({mutant_count}/{opportunity_count} opportunities)"
+    )
+
+
 def _read_single_sequence_fasta(path: Path) -> str:
     """Return the only sequence in a FASTA file."""
     _, sequence = _read_single_sequence_fasta_record(path)
@@ -949,7 +969,10 @@ def _write_unique_support_alignment_html_report(
   configured high-quality junction anchors. Conflicting, unresolved, and
   not-informative fragments are reported separately. Overlapping mates count
   once per fragment. PCR duplicates are not collapsed unless they already
-  share a fragment ID.</p>
+  share a fragment ID. Direction bias compares the mutant fraction among
+  callable junction opportunities in R1 with the corresponding fraction in
+  R2; it is not evaluated unless both directions meet the configured
+  opportunity threshold.</p>
   <div class="legend">
     <span class="legend-item"><span class="legend-chip tandem-region">T</span> tandem sequence</span>
     <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
@@ -1025,16 +1048,20 @@ def _write_tsv_call_report(
                 "Insertion Sequence",
                 "Read-Edge Observation",
                 "Mutant Fragment Count",
-                "Forward Support Count",
-                "Reverse Support Count",
+                "R1 Mutant Count",
+                "R1 Opportunity Count",
+                "R1 Mutant Fraction",
+                "R2 Mutant Count",
+                "R2 Opportunity Count",
+                "R2 Mutant Fraction",
                 "Informative Fragment Count",
                 "Observed Mutant-fragment Fraction",
                 "Mutant/Informative Fragments",
                 "Min Mutant Fragment Count",
                 "Min Informative Fragment Count",
                 "Min Mutant-fragment Fraction",
-                "Max Single-direction Fraction",
-                "Min Directional Observations",
+                "Max Directional Mutant-fraction Share",
+                "Min Opportunities per Direction",
                 "Min Alignment Identity",
                 "Min On-target Fraction",
                 "Min Alignment Score",
@@ -1110,7 +1137,19 @@ def _write_tsv_call_report(
                     "Yes" if call.itd.is_partial_observation else "No",
                     call.supporting_fragment_count,
                     call.forward_support_count,
+                    call.forward_opportunity_count,
+                    (
+                        f"{call.forward_mutant_fraction:.6f}"
+                        if call.forward_mutant_fraction is not None
+                        else "."
+                    ),
                     call.reverse_support_count,
+                    call.reverse_opportunity_count,
+                    (
+                        f"{call.reverse_mutant_fraction:.6f}"
+                        if call.reverse_mutant_fraction is not None
+                        else "."
+                    ),
                     call.spanning_fragment_count,
                     f"{call.observed_supporting_fragment_fraction:.6f}",
                     (
@@ -1177,31 +1216,31 @@ def _write_tsv_call_report(
                 ]
             )
         if not calls:
-            empty_call_values: list[object] = ["."] * 31
+            empty_call_values: list[object] = ["."] * 35
             empty_call_values[3] = mode
             empty_call_values[4] = max_mismatches
-            empty_call_values[19] = min_supporting_fragment_count
-            empty_call_values[20] = min_spanning_fragment_count
-            empty_call_values[21] = f"{min_supporting_fragment_fraction:.6f}"
-            empty_call_values[22] = f"{max_single_direction_fraction:.6f}"
-            empty_call_values[23] = min_directional_observations
+            empty_call_values[23] = min_supporting_fragment_count
+            empty_call_values[24] = min_spanning_fragment_count
+            empty_call_values[25] = f"{min_supporting_fragment_fraction:.6f}"
+            empty_call_values[26] = f"{max_single_direction_fraction:.6f}"
+            empty_call_values[27] = min_directional_observations
             if alignment_filters is not None:
-                empty_call_values[24] = f"{alignment_filters.min_identity:.6f}"
-                empty_call_values[25] = (
+                empty_call_values[28] = f"{alignment_filters.min_identity:.6f}"
+                empty_call_values[29] = (
                     f"{alignment_filters.min_on_target_fraction:.6f}"
                 )
-                empty_call_values[26] = (
+                empty_call_values[30] = (
                     alignment_filters.min_score
                     if alignment_filters.min_score is not None
                     else "."
                 )
-                empty_call_values[27] = (
+                empty_call_values[31] = (
                     "Yes" if alignment_filters.reject_ambiguous else "No"
                 )
             if insertion_filters is not None:
-                empty_call_values[28] = insertion_filters.min_junction_quality
-                empty_call_values[29] = insertion_filters.junction_flank_size
-                empty_call_values[30] = insertion_filters.min_adapter_match_length
+                empty_call_values[32] = insertion_filters.min_junction_quality
+                empty_call_values[33] = insertion_filters.junction_flank_size
+                empty_call_values[34] = insertion_filters.min_adapter_match_length
             writer.writerow(
                 empty_call_values
                 + _sample_tsv_values(sample_result, qc_thresholds)
@@ -1430,12 +1469,12 @@ def _render_html_thresholds_section(
                     f"{filters.min_observed_supporting_fragment_fraction:.3%}",
                 ),
                 (
-                    "Max single-direction fraction",
-                    f"{filters.max_single_direction_fraction:.3f}",
+                    "Max directional mutant-fraction share",
+                    f"{filters.max_directional_mutant_fraction_share:.3f}",
                 ),
                 (
-                    "Min directional observations",
-                    str(filters.min_directional_observations),
+                    "Min opportunities per direction",
+                    str(filters.min_directional_opportunities),
                 ),
             ]
         )
@@ -1553,8 +1592,20 @@ def _render_html_call_section(
         ('Mutant Fragments', str(call.mutant_fragment_count)),
         ('Wild-type Fragments', str(call.wild_type_fragment_count)),
         ('Informative Fragments', str(call.informative_fragment_count)),
-        ('Forward Support Count', str(call.forward_support_count)),
-        ('Reverse Support Count', str(call.reverse_support_count)),
+        (
+            'R1 Evidence',
+            _format_directional_evidence(
+                call.forward_support_count,
+                call.forward_opportunity_count,
+            ),
+        ),
+        (
+            'R2 Evidence',
+            _format_directional_evidence(
+                call.reverse_support_count,
+                call.reverse_opportunity_count,
+            ),
+        ),
         ('Concordant Fragments', str(call.concordant_fragment_count)),
         ('Single-mate Fragments', str(call.single_mate_fragment_count)),
         (

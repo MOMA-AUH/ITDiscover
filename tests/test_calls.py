@@ -204,6 +204,7 @@ def test_low_quality_mutant_evidence_is_unresolved_not_wild_type() -> None:
     assert call.conflicting_fragment_count == 0
     assert call.unresolved_fragment_count == 1
     assert call.not_informative_fragment_count == 1
+    assert call.forward_opportunity_count == 1
     assert call.observed_supporting_fragment_fraction == 0
 
 
@@ -243,6 +244,7 @@ def test_low_quality_wild_type_evidence_is_unresolved_not_denominator() -> None:
     assert call.wild_type_fragment_count == 0
     assert call.informative_fragment_count == 1
     assert call.unresolved_fragment_count == 1
+    assert call.forward_opportunity_count == 1
     assert call.observed_supporting_fragment_fraction == 1
 
 
@@ -980,7 +982,7 @@ def test_filters_on_observed_supporting_fragment_fraction() -> None:
     assert calls[0].filter_reasons == ("LOW_MUTANT_FRAGMENT_FRACTION",)
 
 
-def test_call_exact_itds_marks_one_direction_only_support_as_direction_biased() -> None:
+def test_direction_without_junction_opportunities_does_not_create_bias() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -1004,8 +1006,115 @@ def test_call_exact_itds_marks_one_direction_only_support_as_direction_biased() 
 
     assert calls[0].forward_support_count == 5
     assert calls[0].reverse_support_count == 0
-    assert calls[0].status == "FAIL"
-    assert calls[0].filter_reasons == ("DIRECTION_BIAS",)
+    assert calls[0].forward_opportunity_count == 5
+    assert calls[0].reverse_opportunity_count == 0
+    assert calls[0].status == "PASS"
+    assert calls[0].filter_reasons == ()
+
+
+def test_direction_bias_requires_opportunities_in_both_directions() -> None:
+    reference = "AAACCCGGGTTT"
+    alignments = [
+        make_alignment(
+            f"forward-mutant-{index}",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGGCCCGGGTTT",
+            "AAACCCGGG------TTT",
+            direction="forward",
+        )
+        for index in range(5)
+    ] + [
+        make_alignment(
+            f"reverse-wild-type-{index}",
+            reference,
+            reference,
+            reference,
+            direction="reverse",
+        )
+        for index in range(5)
+    ]
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+        ),
+    )[0]
+
+    assert call.forward_support_count == 5
+    assert call.forward_opportunity_count == 5
+    assert call.forward_mutant_fraction == 1
+    assert call.reverse_support_count == 0
+    assert call.reverse_opportunity_count == 5
+    assert call.reverse_mutant_fraction == 0
+    assert call.status == "FAIL"
+    assert call.filter_reasons == ("DIRECTION_BIAS",)
+
+
+def test_direction_bias_compares_rates_not_raw_support_counts() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant_read = "AAACCCGGGCCCGGGTTT"
+    mutant_reference = "AAACCCGGG------TTT"
+    alignments = [
+        make_alignment(
+            f"forward-mutant-{index}",
+            mutant_read,
+            mutant_read,
+            mutant_reference,
+            direction="forward",
+        )
+        for index in range(5)
+    ] + [
+        make_alignment(
+            f"forward-wild-type-{index}",
+            reference,
+            reference,
+            reference,
+            direction="forward",
+        )
+        for index in range(5)
+    ] + [
+        make_alignment(
+            f"reverse-mutant-{index}",
+            mutant_read,
+            mutant_read,
+            mutant_reference,
+            direction="reverse",
+        )
+        for index in range(2)
+    ] + [
+        make_alignment(
+            f"reverse-wild-type-{index}",
+            reference,
+            reference,
+            reference,
+            direction="reverse",
+        )
+        for index in range(2)
+    ]
+
+    call = call_exact_itds(
+        alignments,
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+            max_single_direction_fraction=0.7,
+            min_directional_observations=2,
+        ),
+    )[0]
+
+    assert call.forward_support_count == 5
+    assert call.forward_opportunity_count == 10
+    assert call.reverse_support_count == 2
+    assert call.reverse_opportunity_count == 4
+    assert call.forward_mutant_fraction == call.reverse_mutant_fraction == 0.5
+    assert call.status == "PASS"
+    assert call.filter_reasons == ()
 
 
 def test_call_fuzzy_itds_reports_exact_and_fuzzy_only_support_counts() -> None:
