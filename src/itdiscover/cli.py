@@ -273,10 +273,11 @@ def _write_unique_support_alignment_html_report(
     max_mismatches: int | None = None,
 ) -> None:
     representatives_by_key: dict[
-        tuple[int, str, str, str, bool], list[UniqueSupportRepresentative]
+        tuple[int, int, str, str, str, bool], list[UniqueSupportRepresentative]
     ] = {}
     for representative in representatives:
         key = (
+            representative.itd.insertion.start,
             representative.itd.tandem_start,
             representative.itd.tandem_sequence,
             representative.itd.spacer_prefix,
@@ -300,6 +301,7 @@ def _write_unique_support_alignment_html_report(
     )
     for call in ordered_calls:
         key = (
+            call.itd.insertion.start,
             call.itd.tandem_start,
             call.itd.tandem_sequence,
             call.itd.spacer_prefix,
@@ -590,6 +592,7 @@ def _write_tsv_call_report(
                 "Spacer Prefix",
                 "Spacer Suffix",
                 "Insertion Sequence",
+                "Read-Edge Observation",
                 "Support Count",
                 "Coverage",
                 "VAF",
@@ -614,6 +617,7 @@ def _write_tsv_call_report(
                     call.itd.spacer_prefix or "-",
                     call.itd.spacer_suffix or "-",
                     call.itd.insertion.sequence,
+                    "Yes" if call.itd.is_partial_observation else "No",
                     call.support_count,
                     call.coverage,
                     f"{call.vaf:.6f}",
@@ -667,6 +671,12 @@ def _render_html_call_section(
         ('Sequence', call.itd.tandem_sequence),
         ('Spacer Prefix', call.itd.spacer_prefix or "-"),
         ('Spacer Suffix', call.itd.spacer_suffix or "-"),
+        (
+            'Read-Edge Observation',
+            'Yes — partial; full ITD not reconstructed'
+            if call.itd.is_partial_observation
+            else 'No',
+        ),
         ('Support Count', str(call.support_count)),
         ('Coverage', str(call.coverage)),
         ('VAF', f"{call.vaf:.6f}"),

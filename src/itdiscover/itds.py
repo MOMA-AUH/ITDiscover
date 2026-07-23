@@ -41,6 +41,16 @@ class ITD:
         """Return the total spacer length."""
         return len(self.spacer_prefix) + len(self.spacer_suffix)
 
+    @property
+    def is_partial_observation(self) -> bool:
+        """Return whether the ITD reaches a read edge and may be incomplete.
+
+        A read-edge insertion lacks sequence on one side of the event.  Its
+        observed copied tract is useful evidence, but it cannot establish the
+        full ITD length or sequence without other reconstruction evidence.
+        """
+        return self.insertion.trailing
+
 
 @dataclass(frozen=True)
 class TandemSimilarity:

@@ -143,6 +143,7 @@ def call_fuzzy_itds_with_representatives(
             support_count=support_count,
             coverage=coverage,
             vaf=vaf,
+            partial_observation=representative.is_partial_observation,
             filters=filters,
         )
         call = ITDCall(
@@ -191,6 +192,7 @@ def call_exact_itds_with_representatives(
             support_count=support_count,
             coverage=coverage,
             vaf=vaf,
+            partial_observation=representative.is_partial_observation,
             filters=filters,
         )
         call = ITDCall(
@@ -541,9 +543,12 @@ def _call_filter_reasons(
     support_count: int,
     coverage: int,
     vaf: float,
+    partial_observation: bool,
     filters: ITDFilter,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
+    if partial_observation:
+        reasons.append("PARTIAL_OBSERVATION")
     if support_count < filters.min_support_count:
         reasons.append("LOW_SUPPORT")
     if coverage < filters.min_coverage:

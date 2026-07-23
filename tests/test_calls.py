@@ -254,6 +254,43 @@ def test_call_exact_itds_ignores_reference_match_away_from_breakpoint() -> None:
     assert call_exact_itds(alignments, reference) == []
 
 
+def test_call_exact_itds_marks_read_edge_itds_as_partial_observations() -> None:
+    reference = "AAACCCGGG"
+    alignment = make_alignment(
+        "partial-itd",
+        "AAACCCGGGCCCGGG",
+        "AAACCCGGGCCCGGG",
+        "AAACCCGGG------",
+    )
+
+    calls = call_exact_itds([alignment], reference)
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == "CCCGGG"
+    assert calls[0].itd.is_partial_observation
+    assert calls[0].status == "FAIL"
+    assert calls[0].filter_reasons == ("PARTIAL_OBSERVATION",)
+
+
+def test_call_exact_itds_reconstructs_fully_observed_long_itd() -> None:
+    reference = "AAACCCGGGTTTAAACCCGGGTTT"
+    tandem = "CCCGGGTTTAAA"
+    alignment = make_alignment(
+        "long-itd",
+        f"AAA{tandem}{reference[3:]}",
+        f"AAA{tandem}{reference[3:]}",
+        f"AAA{'-' * len(tandem)}{reference[3:]}",
+    )
+
+    calls = call_exact_itds([alignment], reference)
+
+    assert len(calls) == 1
+    assert calls[0].itd.tandem_sequence == tandem
+    assert calls[0].itd.length == len(tandem)
+    assert not calls[0].itd.is_partial_observation
+    assert calls[0].status == "PASS"
+
+
 def test_call_exact_itds_returns_sorted_calls() -> None:
     reference = "AAACCCGGGTTTAAACCC"
     alignments = [

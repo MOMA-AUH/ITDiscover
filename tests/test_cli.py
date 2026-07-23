@@ -243,6 +243,7 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Spacer Prefix",
         "Spacer Suffix",
         "Insertion Sequence",
+        "Read-Edge Observation",
         "Support Count",
         "Coverage",
         "VAF",
