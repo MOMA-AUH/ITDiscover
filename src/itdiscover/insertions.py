@@ -7,12 +7,6 @@ from .sequences import VALID_ALIGNMENT_CHARS, validate_sequence
 
 Direction = Literal["forward", "reverse"]
 
-DEFAULT_ADAPTER_SEQUENCES = (
-    "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
-    "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT",
-)
-
-
 @dataclass(frozen=True)
 class Alignment:
     """A read aligned to a wild-type amplicon reference."""
@@ -53,22 +47,16 @@ class Alignment:
 
 @dataclass(frozen=True)
 class InsertionEvidenceFilter:
-    """Base-quality and adapter-artifact safeguards for insertion evidence."""
+    """Base-quality safeguards for insertion evidence."""
 
     min_junction_quality: int = 30
     junction_flank_size: int = 3
-    adapter_sequences: tuple[str, ...] = DEFAULT_ADAPTER_SEQUENCES
-    min_adapter_match_length: int = 12
 
     def __post_init__(self) -> None:
         if self.min_junction_quality < 0:
             raise ValueError("min_junction_quality must not be negative")
         if self.junction_flank_size < 1:
             raise ValueError("junction_flank_size must be at least 1")
-        if self.min_adapter_match_length < 1:
-            raise ValueError("min_adapter_match_length must be at least 1")
-        for sequence in self.adapter_sequences:
-            validate_sequence(sequence, field_name="adapter_sequence")
 
 
 @dataclass(frozen=True)
@@ -184,8 +172,6 @@ def _passes_insertion_filters(
     if require_in_frame and not trailing and len(sequence) % 3 != 0:
         return False
     if evidence_filter is not None:
-        if _contains_adapter(sequence, evidence_filter):
-            return False
         if not _passes_junction_quality(
             alignment,
             insert_start_index,
@@ -194,23 +180,6 @@ def _passes_insertion_filters(
         ):
             return False
     return True
-
-
-def _contains_adapter(
-    sequence: str,
-    evidence_filter: InsertionEvidenceFilter,
-) -> bool:
-    from .sequences import reverse_complement
-
-    for adapter in evidence_filter.adapter_sequences:
-        match_length = evidence_filter.min_adapter_match_length
-        if len(adapter) < match_length:
-            continue
-        for start in range(len(adapter) - match_length + 1):
-            motif = adapter[start : start + match_length]
-            if motif in sequence or reverse_complement(motif) in sequence:
-                return True
-    return False
 
 
 def _passes_junction_quality(

@@ -195,19 +195,3 @@ def test_filters_low_quality_junction_evidence() -> None:
         alignment,
         evidence_filter=InsertionEvidenceFilter(min_junction_quality=30),
     ) == []
-
-
-def test_filters_adapter_sequence_in_insertion_evidence() -> None:
-    adapter = "AGATCGGAAGAG"
-    alignment = Alignment(
-        read_id="adapter-artifact",
-        read_sequence=f"AAA{adapter}GGG",
-        aligned_read=f"AAA{adapter}GGG",
-        aligned_reference=f"AAA{'-' * len(adapter)}GGG",
-        direction="forward",
-    )
-
-    assert extract_insertions(
-        alignment,
-        evidence_filter=InsertionEvidenceFilter(adapter_sequences=(adapter,)),
-    ) == []

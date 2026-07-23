@@ -115,8 +115,7 @@ electrophoresis allelic ratio or a VAF from another library method.
 
 FASTQ-derived evidence is also screened for read-to-reference identity and
 on-target fraction, Phred quality across the inserted sequence and three-base
-junction anchors, standard Illumina adapter motifs, and directional read
-imbalance.
+junction anchors, and directional read imbalance.
 Use `itdiscover --help` to inspect or override every evidence threshold. Raw
 alignment score filtering and rejection of multiply optimal alignments are
 available but disabled by default because suitable cutoffs and equivalent-gap
@@ -183,11 +182,10 @@ output.
 Changing these settings changes the reportable candidate space; it does not by
 itself validate short or out-of-frame events for clinical interpretation.
 
-Primer trimming is optional and can be enabled with `--forward-primer` and
-`--reverse-primer`. Supply each primer in the orientation in which it occurs at
-the 5′ end of its raw FASTQ read: the reverse-primer sequence is therefore
-reverse-complemented internally before it is trimmed from the 3′ end of the
-reference-oriented R2 read.
+Primer trimming is required. Supply `--forward-primer` and `--reverse-primer`
+in the orientation in which each occurs at the 5′ end of its raw FASTQ read:
+the reverse-primer sequence is therefore reverse-complemented internally before
+it is trimmed from the 3′ end of the reference-oriented R2 read.
 
 For an insertion to be called an ITD, its copied reference tract must be immediately
 adjacent to the insertion breakpoint. Extra inserted bases may flank the copied tract

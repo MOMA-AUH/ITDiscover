@@ -22,7 +22,6 @@ from .calls import (
 )
 from .fastq import read_paired_fastq
 from .insertions import (
-    DEFAULT_ADAPTER_SEQUENCES,
     Alignment,
     InsertionEvidenceFilter,
 )
@@ -95,12 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--forward-primer",
-        help="Optional forward primer sequence to trim from the 5' end of R1 reads.",
+        required=True,
+        help="Forward primer sequence trimmed from the 5' end of R1 reads.",
     )
     parser.add_argument(
         "--reverse-primer",
+        required=True,
         help=(
-            "Optional reverse primer sequence as it occurs at the 5' end of raw R2; "
+            "Reverse primer sequence as it occurs at the 5' end of raw R2; "
             "its reverse complement is trimmed from oriented R2 reads."
         ),
     )
@@ -225,21 +226,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="High-quality read bases required on each side of an insertion.",
     )
     parser.add_argument(
-        "--adapter-sequence",
-        action="append",
-        default=list(DEFAULT_ADAPTER_SEQUENCES),
-        help=(
-            "Adapter sequence to reject in insertion evidence; may be repeated. "
-            "Two standard Illumina adapters are checked by default."
-        ),
-    )
-    parser.add_argument(
-        "--min-adapter-match-length",
-        type=_positive_int,
-        default=12,
-        help="Minimum exact adapter motif length rejected in insertion evidence.",
-    )
-    parser.add_argument(
         "--sample-id",
         help="Sample identifier shown in reports; defaults to the R1 filename stem.",
     )
@@ -342,8 +328,6 @@ def _run_call_command(args: argparse.Namespace) -> int:
     insertion_filters = InsertionEvidenceFilter(
         min_junction_quality=args.min_junction_quality,
         junction_flank_size=args.junction_flank_size,
-        adapter_sequences=tuple(args.adapter_sequence),
-        min_adapter_match_length=args.min_adapter_match_length,
     )
     filters = ITDFilter(
         min_mutant_fragment_count=args.min_mutant_fragment_count,
@@ -478,15 +462,7 @@ def _direction_fraction(value: str) -> float:
     return parsed
 
 
-def _build_trim_settings(args: argparse.Namespace) -> ReadTrimSettings | None:
-    if not any(
-        getattr(args, field) is not None
-        for field in (
-            "forward_primer",
-            "reverse_primer",
-        )
-    ):
-        return None
+def _build_trim_settings(args: argparse.Namespace) -> ReadTrimSettings:
     return ReadTrimSettings(
         forward_primer=args.forward_primer,
         reverse_primer=args.reverse_primer,
@@ -1052,7 +1028,6 @@ def _write_tsv_call_report(
                 "Reject Ambiguous Alignments",
                 "Min Junction Quality",
                 "Junction Flank Size",
-                "Min Adapter Match Length",
                 "Sample ID",
                 "Analysis Status",
                 "QC Status",
@@ -1177,11 +1152,6 @@ def _write_tsv_call_report(
                         if insertion_filters is not None
                         else "."
                     ),
-                    (
-                        insertion_filters.min_adapter_match_length
-                        if insertion_filters is not None
-                        else "."
-                    ),
                     *_sample_tsv_values(sample_result, qc_thresholds),
                     call.concordant_fragment_count,
                     call.single_mate_fragment_count,
@@ -1200,7 +1170,7 @@ def _write_tsv_call_report(
                 ]
             )
         if not calls:
-            empty_call_values: list[object] = ["."] * 35
+            empty_call_values: list[object] = ["."] * 34
             empty_call_values[3] = mode
             empty_call_values[4] = max_mismatches
             empty_call_values[23] = min_mutant_fragment_count
@@ -1224,7 +1194,6 @@ def _write_tsv_call_report(
             if insertion_filters is not None:
                 empty_call_values[32] = insertion_filters.min_junction_quality
                 empty_call_values[33] = insertion_filters.junction_flank_size
-                empty_call_values[34] = insertion_filters.min_adapter_match_length
             writer.writerow(
                 empty_call_values
                 + _sample_tsv_values(sample_result, qc_thresholds)
@@ -1498,14 +1467,6 @@ def _render_html_thresholds_section(
                     str(insertion_filters.min_junction_quality),
                 ),
                 ("Junction flank size", str(insertion_filters.junction_flank_size)),
-                (
-                    "Adapter sequences checked",
-                    str(len(insertion_filters.adapter_sequences)),
-                ),
-                (
-                    "Min adapter match length",
-                    str(insertion_filters.min_adapter_match_length),
-                ),
             ]
         )
 

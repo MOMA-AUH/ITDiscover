@@ -30,6 +30,30 @@ def test_main_requires_arguments(capsys) -> None:
     assert "required" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("missing_primer", ["--forward-primer", "--reverse-primer"])
+def test_call_command_requires_both_primers(missing_primer, capsys) -> None:
+    arguments = [
+        "--reference",
+        "reference.fasta",
+        "--r1",
+        "r1.fastq",
+        "--r2",
+        "r2.fastq",
+        "--forward-primer",
+        "AAA",
+        "--reverse-primer",
+        "TTT",
+    ]
+    primer_index = arguments.index(missing_primer)
+    del arguments[primer_index : primer_index + 2]
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(arguments)
+
+    assert exc_info.value.code == 2
+    assert missing_primer in capsys.readouterr().err
+
+
 def test_event_length_thresholds_must_be_positive(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(
@@ -58,6 +82,10 @@ def test_direction_and_copied_segment_options_use_clear_destinations() -> None:
             "r1.fastq",
             "--r2",
             "r2.fastq",
+            "--forward-primer",
+            "AAA",
+            "--reverse-primer",
+            "AAA",
             "--max-directional-mutant-fraction-share",
             "0.8",
             "--min-directional-opportunities",
@@ -174,6 +202,10 @@ def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> N
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",
@@ -195,13 +227,13 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     r1_path.write_text(
         (
             "@itd-fragment/1\n"
-            "AAACCCGGGCCCGGATTT\n"
+            "AAAAAACCCGGGCCCGGATTT\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/1\n"
-            "AAACCCGGGTTT\n"
+            "AAAAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -210,13 +242,13 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     r2_path.write_text(
         (
             "@itd-fragment/2\n"
-            f"{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
+            f"AAA{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
-            "AAACCCGGGTTT\n"
+            "AAAAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -230,6 +262,10 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",
@@ -302,13 +338,13 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     r1_path.write_text(
         (
             "@itd-fragment/1\n"
-            "AAACCCGGGCCCGGATTT\n"
+            "AAAAAACCCGGGCCCGGATTT\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/1\n"
-            "AAACCCGGGTTT\n"
+            "AAAAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -317,13 +353,13 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     r2_path.write_text(
         (
             "@itd-fragment/2\n"
-            f"{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
+            f"AAA{reverse_complement('AAACCCGGGCCCGGATTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
-            "AAACCCGGGTTT\n"
+            "AAAAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -337,6 +373,10 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",
@@ -387,7 +427,6 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Reject Ambiguous Alignments",
         "Min Junction Quality",
         "Junction Flank Size",
-        "Min Adapter Match Length",
         "Sample ID",
         "Analysis Status",
         "QC Status",
@@ -460,19 +499,19 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "0.500000",
         "1/2 informative fragments",
     ]
-    assert rows[1][35:40] == [
+    assert rows[1][34:39] == [
         "sample",
         "complete",
         "fail",
         "indeterminate",
         "LOW_USABLE_FRAGMENT_COUNT;LOW_MEDIAN_INTERBASE_COVERAGE",
     ]
-    assert rows[1][61:63] == ["0", "1"]
-    assert rows[1][68:74] == ["1", "0", "0", "0", "1", "0"]
-    assert rows[1][74:76] == ["FLT3 exon 14-15 assay", "12"]
-    assert rows[1][76] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
-    assert rows[1][77] == cli.COORDINATE_CONVENTION
-    assert rows[1][78] == "immediately before insertion"
+    assert rows[1][60:62] == ["0", "1"]
+    assert rows[1][67:73] == ["1", "0", "0", "0", "1", "0"]
+    assert rows[1][73:75] == ["FLT3 exon 14-15 assay", "12"]
+    assert rows[1][75] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
+    assert rows[1][76] == cli.COORDINATE_CONVENTION
+    assert rows[1][77] == "immediately before insertion"
     assert rows[1][-3:] == ["6", "6", "Yes"]
 
 
@@ -486,11 +525,11 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
     r1_path = tmp_path / "negative_R1.fastq"
     r2_path = tmp_path / "negative_R2.fastq"
     records = "".join(
-        f"@fragment-{index}/1\n{reference}\n+\n{'I' * len(reference)}\n"
+        f"@fragment-{index}/1\nAAA{reference}\n+\n{'I' * (len(reference) + 3)}\n"
         for index in range(10)
     )
     reverse_records = "".join(
-        f"@fragment-{index}/2\n{reference}\n+\n{'I' * len(reference)}\n"
+        f"@fragment-{index}/2\nAAA{reference}\n+\n{'I' * (len(reference) + 3)}\n"
         for index in range(10)
     )
     r1_path.write_text(records, encoding="utf-8")
@@ -506,6 +545,10 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
             str(r1_path),
             "--r2",
             str(r2_path),
+            "--forward-primer",
+            "AAA",
+            "--reverse-primer",
+            "AAA",
             "--min-read-length",
             "12",
             "--output",
@@ -526,7 +569,7 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
     )
     assert len(rows) == 2
     assert rows[1][0] == "."
-    assert rows[1][35:40] == [
+    assert rows[1][34:39] == [
         "negative",
         "complete",
         "pass",
@@ -563,6 +606,10 @@ def test_cli_can_report_short_out_of_frame_tandem_when_explicitly_enabled(
             str(r1_path),
             "--r2",
             str(r2_path),
+            "--forward-primer",
+            "GGG",
+            "--reverse-primer",
+            "AAA",
             "--min-read-length",
             "12",
             "--min-insert-length",
@@ -604,6 +651,10 @@ def test_analysis_error_report_is_indeterminate(tmp_path) -> None:
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--output",
                 str(report_path),
             ]
@@ -727,6 +778,10 @@ def test_call_command_silently_filters_reads(tmp_path, capsys) -> None:
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "13",
                 "--min-mean-quality",
@@ -752,6 +807,10 @@ def test_call_command_rejects_multi_sequence_reference(tmp_path) -> None:
                 "unused_R1.fastq",
                 "--r2",
                 "unused_R2.fastq",
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
             ]
         )
 
@@ -765,17 +824,17 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     r1_path.write_text(
         (
             "@itd-fragment-1/1\n"
-            "TTTAAACCCGGGCCCGGGTTT\n"
+            "TTTTAAACCCGGGCCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIIII\n"
             "@itd-fragment-2/1\n"
             "TTCAAACCCGGGCCCGGGTTT\n"
             "+\n"
             "IIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/1\n"
-            "TTTAAACCCGGGTTT\n"
+            "TTTTAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -784,17 +843,17 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     r2_path.write_text(
         (
             "@itd-fragment-1/2\n"
-            f"{reverse_complement('TTTAAACCCGGGCCCGGGTTT')}\n"
+            f"AAA{reverse_complement('TTTAAACCCGGGCCCGGGTTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIIIIII\n"
             "@itd-fragment-2/2\n"
-            f"{reverse_complement('TTCAAACCCGGGCCCGGGTTT')}\n"
+            f"AAA{reverse_complement('TTCAAACCCGGGCCCGGGTTT')}\n"
             "+\n"
-            "IIIIIIIIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIIIIIIIII\n"
             "@wt-fragment/2\n"
-            "TTTAAACCCGGGTTT\n"
+            "AAATTTAAACCCGGGTTT\n"
             "+\n"
-            "IIIIIIIIIIIIIII\n"
+            "IIIIIIIIIIIIIIIIII\n"
         ),
         encoding="utf-8",
     )
@@ -808,6 +867,10 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "T",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",
@@ -1056,6 +1119,10 @@ def test_call_command_rejects_non_html_output_path(tmp_path, capsys) -> None:
                 "unused_R1.fastq",
                 "--r2",
                 "unused_R2.fastq",
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--output",
                 "report.txt",
             ]
@@ -1075,6 +1142,10 @@ def test_call_command_rejects_negative_max_mismatches(capsys) -> None:
                 "sample_R1.fastq",
                 "--r2",
                 "sample_R2.fastq",
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--max-mismatches",
                 "-1",
             ]
@@ -1127,6 +1198,10 @@ def test_call_command_filters_without_stdout_report(tmp_path, capsys) -> None:
                 str(r1_path),
                 "--r2",
                 str(r2_path),
+                "--forward-primer",
+                "AAA",
+                "--reverse-primer",
+                "AAA",
                 "--min-read-length",
                 "12",
                 "--min-mean-quality",
