@@ -208,8 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "Reject reads with multiple optimal placements. Enable only when "
-            "the assay cannot normalize equivalent tandem-gap placements."
+            "Reject reads whose optimal alignments imply different normalized "
+            "sequence events. Equivalent tandem-gap placements are retained."
         ),
     )
     parser.add_argument(
@@ -311,16 +311,20 @@ def _run_call_command(args: argparse.Namespace) -> int:
         trimming=trimming,
     )
     processed_reads = list(preprocessing_result.reads)
-    unfiltered_alignments = [
-        align_read_to_reference(read, reference)
-        for read in processed_reads
-    ]
     alignment_filters = AlignmentEvidenceFilter(
         min_identity=args.min_alignment_identity,
         min_on_target_fraction=args.min_on_target_fraction,
         min_score=args.min_alignment_score,
         reject_ambiguous=args.reject_ambiguous_alignments,
     )
+    unfiltered_alignments = [
+        align_read_to_reference(
+            read,
+            reference,
+            detect_ambiguous_events=alignment_filters.reject_ambiguous,
+        )
+        for read in processed_reads
+    ]
     alignments = [
         alignment
         for alignment in unfiltered_alignments
@@ -650,17 +654,10 @@ def _write_unique_support_alignment_html_report(
     reference_length: int | None = None,
     reference_sha256: str | None = None,
 ) -> None:
-    representatives_by_key: dict[
-        tuple[int, int, str, str, str, bool], list[UniqueSupportRepresentative]
-    ] = {}
+    representatives_by_key: dict[object, list[UniqueSupportRepresentative]] = {}
     for representative in representatives:
-        key = (
-            representative.itd.insertion.start,
-            representative.itd.tandem_start,
-            representative.itd.tandem_sequence,
-            representative.itd.spacer_prefix,
-            representative.itd.spacer_suffix,
-            representative.itd.insertion.trailing,
+        key = representative.canonical_allele or _legacy_itd_identity(
+            representative.itd
         )
         representatives_by_key.setdefault(key, []).append(representative)
 
@@ -678,14 +675,7 @@ def _write_unique_support_alignment_html_report(
         ),
     )
     for call in ordered_calls:
-        key = (
-            call.itd.insertion.start,
-            call.itd.tandem_start,
-            call.itd.tandem_sequence,
-            call.itd.spacer_prefix,
-            call.itd.spacer_suffix,
-            call.itd.insertion.trailing,
-        )
+        key = call.canonical_allele or _legacy_itd_identity(call.itd)
         call_representatives = representatives_by_key.get(key, [])
         sections.append(_render_html_call_section(call, call_representatives))
 
@@ -976,6 +966,18 @@ def _write_unique_support_alignment_html_report(
         .replace("__EMPTY_STATE__", empty_state)
         .replace("__SECTIONS__", "\n".join(sections)),
         encoding="utf-8",
+    )
+
+
+def _legacy_itd_identity(itd) -> tuple[int, int, str, str, str, bool]:
+    """Return the former identity for manually constructed report objects."""
+    return (
+        itd.insertion.start,
+        itd.tandem_start,
+        itd.tandem_sequence,
+        itd.spacer_prefix,
+        itd.spacer_suffix,
+        itd.insertion.trailing,
     )
 
 

@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 import math
 import warnings
 
+from .alleles import (
+    CanonicalInsertionAllele,
+    canonicalize_insertion,
+    canonicalize_insertion_allele,
+)
 from .coverage import (
     interbase_fragment_ids,
     observed_supporting_fragment_fraction,
@@ -36,6 +41,10 @@ class ITDCall:
     single_mate_fragment_count: int = field(default=0, compare=False)
     discordant_fragment_count: int = field(default=0, compare=False)
     unresolved_fragment_count: int = field(default=0, compare=False)
+    canonical_allele: CanonicalInsertionAllele | None = field(
+        default=None,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         expected_fraction = observed_supporting_fragment_fraction(
@@ -147,6 +156,10 @@ class UniqueSupportRepresentative:
     fuzzy_example_sequence: str | None = None
     mismatches: int = 0
     insert_sequence_supports: tuple["InsertSequenceSupport", ...] = ()
+    canonical_allele: CanonicalInsertionAllele | None = field(
+        default=None,
+        compare=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -173,11 +186,13 @@ class FragmentConsensusSupport:
 class _CandidateObservation:
     itd: ITD
     alignment: Alignment
+    observed_allele: CanonicalInsertionAllele
+    canonical_allele: CanonicalInsertionAllele
 
 
-# The breakpoint is part of the event identity.  Calls with the same copied
-# tract but different insertion sites need separate support and spanning counts.
-ITDCallKey = tuple[int, int, str, str, str, bool]
+# Exact observed ALT identity is independent of an aligner's arbitrary gap
+# placement and of the copied-tract/spacer annotation inferred from that gap.
+ITDCallKey = CanonicalInsertionAllele
 SupportRepresentativeMap = dict[ITDCallKey, dict[str, UniqueSupportRepresentative]]
 
 
@@ -263,9 +278,8 @@ def call_fuzzy_itds_with_representatives(
 
     calls: list[ITDCall] = []
     representatives: list[UniqueSupportRepresentative] = []
-    for itds in grouped_itds.values():
-        representative = _representative_itd(itds)
-        key = _itd_call_key(representative)
+    for key, itds in grouped_itds.items():
+        representative = _representative_itd(itds, key)
         consensus = consensus_by_key[key]
         supporting_fragment_count = len(consensus.supporting_fragment_ids)
         forward_support_count, reverse_support_count = _direction_support_counts(
@@ -273,9 +287,10 @@ def call_fuzzy_itds_with_representatives(
             consensus.supporting_fragment_ids,
         )
         eligible_spanning_fragments = spanning_fragments_by_site.get(
-            representative.insertion.start,
+            key.start,
             frozenset(),
         ) - consensus.discordant_fragment_ids - consensus.unresolved_fragment_ids
+        eligible_spanning_fragments |= consensus.supporting_fragment_ids
         spanning_fragment_count = len(eligible_spanning_fragments)
         observed_fraction = observed_supporting_fragment_fraction(
             supporting_fragment_count,
@@ -305,6 +320,7 @@ def call_fuzzy_itds_with_representatives(
             single_mate_fragment_count=len(consensus.single_mate_fragment_ids),
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
             unresolved_fragment_count=len(consensus.unresolved_fragment_ids),
+            canonical_allele=key,
         )
         calls.append(call)
         representatives.extend(
@@ -344,9 +360,8 @@ def call_exact_itds_with_representatives(
 
     calls: list[ITDCall] = []
     representatives: list[UniqueSupportRepresentative] = []
-    for itds in grouped_itds.values():
-        representative = _representative_itd(itds)
-        key = _itd_call_key(representative)
+    for key, itds in grouped_itds.items():
+        representative = _representative_itd(itds, key)
         consensus = consensus_by_key[key]
         supporting_fragment_count = len(consensus.supporting_fragment_ids)
         forward_support_count, reverse_support_count = _direction_support_counts(
@@ -354,9 +369,10 @@ def call_exact_itds_with_representatives(
             consensus.supporting_fragment_ids,
         )
         eligible_spanning_fragments = spanning_fragments_by_site.get(
-            representative.insertion.start,
+            key.start,
             frozenset(),
         ) - consensus.discordant_fragment_ids - consensus.unresolved_fragment_ids
+        eligible_spanning_fragments |= consensus.supporting_fragment_ids
         spanning_fragment_count = len(eligible_spanning_fragments)
         observed_fraction = observed_supporting_fragment_fraction(
             supporting_fragment_count,
@@ -386,6 +402,7 @@ def call_exact_itds_with_representatives(
             single_mate_fragment_count=len(consensus.single_mate_fragment_ids),
             discordant_fragment_count=len(consensus.discordant_fragment_ids),
             unresolved_fragment_count=len(consensus.unresolved_fragment_ids),
+            canonical_allele=key,
         )
         calls.append(call)
         representatives.extend(
@@ -397,19 +414,28 @@ def call_exact_itds_with_representatives(
     return calls, representatives
 
 
-def _itd_call_key(itd: ITD) -> ITDCallKey:
-    return (
-        itd.insertion.start,
-        itd.tandem_start,
-        itd.tandem_sequence,
-        itd.spacer_prefix,
-        itd.spacer_suffix,
-        itd.insertion.trailing,
+def _representative_itd(
+    itds: list[ITD],
+    canonical_allele: CanonicalInsertionAllele,
+) -> ITD:
+    return min(
+        itds,
+        key=lambda itd: (
+            (
+                itd.insertion.start != canonical_allele.start
+                or itd.insertion.sequence != canonical_allele.sequence
+            ),
+            -itd.length,
+            itd.spacer_length,
+            itd.tandem_start,
+            itd.insertion.start,
+            itd.insertion.sequence,
+            itd.orientation,
+            itd.insertion.read_id,
+            itd.insertion.fragment_id,
+            itd.insertion.direction,
+        ),
     )
-
-
-def _representative_itd(itds: list[ITD]) -> ITD:
-    return itds[0]
 
 
 def _sort_key(call: ITDCall) -> tuple[int, int, str, str, str]:
@@ -503,14 +529,27 @@ def _collect_exact_itd_support(
             )
             if itd is None:
                 continue
-            observations.append(_CandidateObservation(itd=itd, alignment=alignment))
+            observations.append(
+                _CandidateObservation(
+                    itd=itd,
+                    alignment=alignment,
+                    observed_allele=canonicalize_insertion_allele(
+                        itd.insertion,
+                        reference,
+                    ),
+                    canonical_allele=canonicalize_insertion_allele(
+                        itd.insertion,
+                        reference,
+                    ),
+                )
+            )
 
     consensus_by_key = _fragment_consensus_support(observations, alignments)
     for observation in observations:
         itd = observation.itd
         alignment = observation.alignment
 
-        key = _itd_call_key(itd)
+        key = observation.canonical_allele
         expected_sequence = _expected_insertion_sequence(itd)
         grouped_itds[key].append(itd)
         signature = _support_signature(
@@ -549,6 +588,7 @@ def _collect_exact_itd_support(
                     expected_sequence,
                 ),
                 insert_sequence_supports=insert_sequence_supports,
+                canonical_allele=key,
             )
 
     return grouped_itds, finalized_map, consensus_by_key
@@ -604,7 +644,22 @@ def _collect_fuzzy_itd_support(
             if itd is None:
                 continue
 
-            observations.append(_CandidateObservation(itd=itd, alignment=alignment))
+            observations.append(
+                _CandidateObservation(
+                    itd=itd,
+                    alignment=alignment,
+                    observed_allele=canonicalize_insertion_allele(
+                        insertion,
+                        reference,
+                    ),
+                    canonical_allele=canonicalize_insertion(
+                        start=insertion.start,
+                        sequence=_expected_insertion_sequence(itd),
+                        reference=reference,
+                        trailing=insertion.trailing,
+                    ),
+                )
+            )
 
     consensus_by_key = _fragment_consensus_support(observations, alignments)
     for observation in observations:
@@ -612,7 +667,7 @@ def _collect_fuzzy_itd_support(
         alignment = observation.alignment
         insertion = itd.insertion
 
-        key = _itd_call_key(itd)
+        key = observation.canonical_allele
         expected_sequence = _expected_insertion_sequence(itd)
         sequence_mismatches = _sequence_mismatches(
             insertion.sequence,
@@ -677,6 +732,7 @@ def _collect_fuzzy_itd_support(
                     expected_sequence,
                 ),
                 insert_sequence_supports=insert_sequence_supports,
+                canonical_allele=key,
             )
 
     return grouped_itds, finalized_map, consensus_by_key
@@ -688,29 +744,30 @@ def _fragment_consensus_support(
 ) -> dict[ITDCallKey, FragmentConsensusSupport]:
     """Reconcile R1/R2 evidence before assigning fragment support.
 
-    Concordant fragments have the same candidate and observed inserted sequence
-    in both directions.
+    Concordant fragments have the same canonical ALT allele in both directions.
     Single-mate fragments have one candidate and no opposite mate spanning the
     breakpoint. Discordant fragments have incompatible candidates or a
     breakpoint-spanning opposite mate without the candidate. Multiple candidate
-    observations in one direction, or different inserted sequences assigned to
-    one candidate across mates, are unresolved. Discordant and unresolved
+    observations in one direction, or different observed alleles of the same
+    length assigned across mates, are unresolved. Discordant and unresolved
     fragments are ineligible for both support and local coverage.
     """
     observations = list(observations)
     alignments = list(alignments)
-    candidates_by_fragment_site_direction: dict[
-        str, dict[int, dict[str, set[tuple[ITDCallKey, str]]]]
-    ] = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    candidates_by_fragment_direction: dict[
+        str,
+        dict[
+            str,
+            set[tuple[ITDCallKey, CanonicalInsertionAllele]],
+        ],
+    ] = defaultdict(lambda: defaultdict(set))
     all_keys: set[ITDCallKey] = set()
     for observation in observations:
-        key = _itd_call_key(observation.itd)
+        key = observation.canonical_allele
         all_keys.add(key)
-        candidates_by_fragment_site_direction[observation.alignment.fragment_id][
-            observation.itd.insertion.start
-        ][observation.alignment.direction].add(
-            (key, observation.itd.insertion.sequence)
-        )
+        candidates_by_fragment_direction[observation.alignment.fragment_id][
+            observation.alignment.direction
+        ].add((key, observation.observed_allele))
 
     alignments_by_fragment_direction: dict[
         str, dict[str, list[Alignment]]
@@ -731,49 +788,52 @@ def _fragment_consensus_support(
         for key in all_keys
     }
 
-    for fragment_id, sites in candidates_by_fragment_site_direction.items():
-        for site, candidates_by_direction in sites.items():
-            forward_candidates = candidates_by_direction.get("forward", set())
-            reverse_candidates = candidates_by_direction.get("reverse", set())
-            candidate_keys = {
-                key for key, _ in forward_candidates | reverse_candidates
-            }
-            if len(forward_candidates) > 1 or len(reverse_candidates) > 1:
+    for (
+        fragment_id,
+        candidates_by_direction,
+    ) in candidates_by_fragment_direction.items():
+        forward_candidates = candidates_by_direction.get("forward", set())
+        reverse_candidates = candidates_by_direction.get("reverse", set())
+        candidate_keys = {
+            key for key, _ in forward_candidates | reverse_candidates
+        }
+        if len(forward_candidates) > 1 or len(reverse_candidates) > 1:
+            for key in candidate_keys:
+                category_sets[key]["unresolved"].add(fragment_id)
+            continue
+
+        if forward_candidates and reverse_candidates:
+            forward_key, forward_observed = next(iter(forward_candidates))
+            reverse_key, reverse_observed = next(iter(reverse_candidates))
+            if forward_key != reverse_key:
                 for key in candidate_keys:
-                    category_sets[key]["unresolved"].add(fragment_id)
+                    category_sets[key]["discordant"].add(fragment_id)
                 continue
-
-            if forward_candidates and reverse_candidates:
-                forward_key, forward_sequence = next(iter(forward_candidates))
-                reverse_key, reverse_sequence = next(iter(reverse_candidates))
-                if forward_key != reverse_key:
-                    for key in candidate_keys:
-                        category_sets[key]["discordant"].add(fragment_id)
-                elif forward_sequence == reverse_sequence:
-                    key = forward_key
-                    category_sets[key]["supporting"].add(fragment_id)
-                    category_sets[key]["concordant"].add(fragment_id)
-                else:
-                    category_sets[forward_key]["unresolved"].add(fragment_id)
+            if forward_observed != reverse_observed:
+                category_sets[forward_key]["unresolved"].add(fragment_id)
                 continue
+            key = forward_key
+            category_sets[key]["supporting"].add(fragment_id)
+            category_sets[key]["concordant"].add(fragment_id)
+            continue
 
-            key = next(iter(candidate_keys))
-            candidate_direction = "forward" if forward_candidates else "reverse"
-            opposite_direction = (
-                "reverse" if candidate_direction == "forward" else "forward"
+        key = next(iter(candidate_keys))
+        candidate_direction = "forward" if forward_candidates else "reverse"
+        opposite_direction = (
+            "reverse" if candidate_direction == "forward" else "forward"
+        )
+        opposite_spans_site = any(
+            spans_insertion_site(alignment, key.start)
+            for alignment in alignments_by_fragment_direction[fragment_id].get(
+                opposite_direction,
+                [],
             )
-            opposite_spans_site = any(
-                spans_insertion_site(alignment, site)
-                for alignment in alignments_by_fragment_direction[fragment_id].get(
-                    opposite_direction,
-                    [],
-                )
-            )
-            if opposite_spans_site:
-                category_sets[key]["discordant"].add(fragment_id)
-            else:
-                category_sets[key]["supporting"].add(fragment_id)
-                category_sets[key]["single_mate"].add(fragment_id)
+        )
+        if opposite_spans_site:
+            category_sets[key]["discordant"].add(fragment_id)
+        else:
+            category_sets[key]["supporting"].add(fragment_id)
+            category_sets[key]["single_mate"].add(fragment_id)
 
     return {
         key: FragmentConsensusSupport(

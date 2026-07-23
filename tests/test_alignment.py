@@ -74,6 +74,43 @@ def test_align_read_to_reference_represents_insertions_as_reference_gaps() -> No
     )
 
 
+def test_equivalent_insertion_gap_placements_are_not_ambiguous_events() -> None:
+    read = SequencingRead(
+        read_id="read-1",
+        sequence="AAACCCGGGCCCGGGTTT",
+        qualities=(40,) * 18,
+        direction="forward",
+    )
+
+    alignment = align_read_to_reference(read, "AAACCCGGGTTT")
+
+    assert not alignment.is_ambiguous
+    assert passes_alignment_evidence_filters(
+        alignment,
+        AlignmentEvidenceFilter(
+            min_on_target_fraction=0,
+            reject_ambiguous=True,
+        ),
+    )
+
+
+def test_distinct_optimal_event_placements_remain_ambiguous() -> None:
+    read = SequencingRead(
+        read_id="read-1",
+        sequence="AAA",
+        qualities=(40,) * 3,
+        direction="forward",
+    )
+
+    alignment = align_read_to_reference(read, "AAAA")
+
+    assert alignment.is_ambiguous
+    assert not passes_alignment_evidence_filters(
+        alignment,
+        AlignmentEvidenceFilter(reject_ambiguous=True),
+    )
+
+
 def test_align_read_to_reference_accepts_custom_scoring() -> None:
     read = SequencingRead(
         read_id="read-1",

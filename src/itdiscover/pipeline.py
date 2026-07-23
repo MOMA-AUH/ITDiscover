@@ -38,7 +38,12 @@ def call_exact_itds_from_fragments(
         trimming=trimming,
     )
     alignments = [
-        align_read_to_reference(read, reference, scoring=scoring)
+        align_read_to_reference(
+            read,
+            reference,
+            scoring=scoring,
+            detect_ambiguous_events=alignment_filters.reject_ambiguous,
+        )
         for read in processed_reads
     ]
     alignments = [
@@ -82,7 +87,12 @@ def call_fuzzy_itds_from_fragments(
         trimming=trimming,
     )
     alignments = [
-        align_read_to_reference(read, reference, scoring=scoring)
+        align_read_to_reference(
+            read,
+            reference,
+            scoring=scoring,
+            detect_ambiguous_events=alignment_filters.reject_ambiguous,
+        )
         for read in processed_reads
     ]
     alignments = [

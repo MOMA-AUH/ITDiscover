@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from Bio.Align import PairwiseAligner
 
+from .alleles import CanonicalInsertionAllele, canonicalize_insertion
 from .insertions import Alignment
 from .reads import SequencingRead
 from .sequences import validate_sequence
@@ -41,6 +42,7 @@ def align_read_to_reference(
     reference: str,
     *,
     scoring: AlignmentScoring = AlignmentScoring(),
+    detect_ambiguous_events: bool = True,
 ) -> Alignment:
     """Globally align an oriented read to the WT reference."""
     validate_sequence(reference, field_name="reference")
@@ -56,6 +58,15 @@ def align_read_to_reference(
         read.qualities,
         pairwise_alignment.coordinates,
     )
+    has_distinct_optimal_events = (
+        _has_distinct_optimal_event_signatures(
+            pairwise_alignments,
+            reference,
+            read.sequence,
+        )
+        if detect_ambiguous_events
+        else False
+    )
     return Alignment(
         read_id=read.read_id,
         fragment_id=read.fragment_id,
@@ -65,7 +76,7 @@ def align_read_to_reference(
         direction=read.direction,
         aligned_qualities=aligned_qualities,
         score=float(pairwise_alignment.score),
-        is_ambiguous=len(pairwise_alignments) > 1,
+        is_ambiguous=has_distinct_optimal_events,
     )
 
 
@@ -112,6 +123,105 @@ def _build_aligner(scoring: AlignmentScoring) -> PairwiseAligner:
     aligner.extend_gap_score = scoring.gap_extend
     aligner.end_gap_score = scoring.end_gap
     return aligner
+
+
+_MAX_OPTIMAL_ALIGNMENTS_TO_COMPARE = 4096
+
+
+def _has_distinct_optimal_event_signatures(
+    pairwise_alignments,
+    reference: str,
+    read_sequence: str,
+) -> bool:
+    """Return whether optimal alignments imply different sequence events.
+
+    Multiple optimal alignments are harmless when they differ only in where a
+    gap is drawn within a repeated sequence. Each insertion is normalized
+    before signatures are compared. Extremely large optimal-alignment spaces
+    are retained as ambiguous rather than being exhaustively enumerated.
+    """
+    alignment_count = len(pairwise_alignments)
+    if alignment_count <= 1:
+        return False
+    if alignment_count > _MAX_OPTIMAL_ALIGNMENTS_TO_COMPARE:
+        return True
+
+    first_signature = None
+    for index in range(alignment_count):
+        aligned_reference, aligned_read = _aligned_strings_from_coordinates(
+            reference,
+            read_sequence,
+            pairwise_alignments[index].coordinates,
+        )
+        signature = _alignment_event_signature(
+            aligned_reference,
+            aligned_read,
+            reference,
+        )
+        if first_signature is None:
+            first_signature = signature
+            continue
+        if signature != first_signature:
+            return True
+    return False
+
+
+def _alignment_event_signature(
+    aligned_reference: str,
+    aligned_read: str,
+    reference: str,
+) -> tuple[
+    tuple[CanonicalInsertionAllele, ...],
+    tuple[int, ...],
+    tuple[tuple[int, str], ...],
+]:
+    """Return normalized insertions, deletions, and substitutions."""
+    insertions: list[CanonicalInsertionAllele] = []
+    deleted_positions: list[int] = []
+    substitutions: list[tuple[int, str]] = []
+    ref_pos = -1
+    index = 0
+
+    while index < len(aligned_reference):
+        ref_base = aligned_reference[index]
+        read_base = aligned_read[index]
+        if ref_base == "-" and read_base != "-":
+            insertion_start = ref_pos
+            insertion_bases: list[str] = []
+            insertion_alignment_start = index
+            while (
+                index < len(aligned_reference)
+                and aligned_reference[index] == "-"
+                and aligned_read[index] != "-"
+            ):
+                insertion_bases.append(aligned_read[index])
+                index += 1
+            insertions.append(
+                canonicalize_insertion(
+                    start=insertion_start,
+                    sequence="".join(insertion_bases),
+                    reference=reference,
+                    trailing=(
+                        insertion_alignment_start == 0
+                        or index == len(aligned_reference)
+                    ),
+                )
+            )
+            continue
+
+        if ref_base != "-":
+            ref_pos += 1
+            if read_base == "-":
+                deleted_positions.append(ref_pos)
+            elif read_base != ref_base:
+                substitutions.append((ref_pos, read_base))
+        index += 1
+
+    return (
+        tuple(insertions),
+        tuple(deleted_positions),
+        tuple(substitutions),
+    )
 
 
 def _aligned_strings_from_coordinates(

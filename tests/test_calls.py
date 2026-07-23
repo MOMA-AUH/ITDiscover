@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from itdiscover.calls import (
     ITDCall,
     ITDFilter,
     call_exact_itds,
+    call_exact_itds_with_representatives,
     call_fuzzy_itds_with_representatives,
 )
 from itdiscover.insertions import Alignment, Insertion
@@ -300,7 +303,7 @@ def test_call_fuzzy_itds_does_not_hide_mate_sequence_disagreement() -> None:
     )
 
 
-def test_call_exact_itds_keeps_distinct_breakpoints_separate() -> None:
+def test_call_exact_itds_combines_equivalent_gap_placements() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -329,19 +332,29 @@ def test_call_exact_itds_keeps_distinct_breakpoints_separate() -> None:
         for index in range(1, 8)
     ]
 
-    calls = call_exact_itds(alignments, reference)
+    calls, representatives = call_exact_itds_with_representatives(
+        alignments,
+        reference,
+    )
 
-    assert len(calls) == 2
-    assert [call.itd.insertion.start for call in calls] == [2, 8]
-    assert [call.supporting_fragment_count for call in calls] == [3, 2]
-    assert [call.spanning_fragment_count for call in calls] == [12, 12]
-    assert [call.observed_supporting_fragment_fraction for call in calls] == [
-        3 / 12,
-        2 / 12,
-    ]
+    assert len(calls) == 1
+    assert calls[0].itd.insertion.start == 2
+    assert calls[0].canonical_allele is not None
+    assert calls[0].canonical_allele.start == 2
+    assert calls[0].canonical_allele.sequence == "CCCGGG"
+    assert calls[0].supporting_fragment_count == 5
+    assert calls[0].spanning_fragment_count == 12
+    assert calls[0].observed_supporting_fragment_fraction == 5 / 12
+    assert {
+        representative.itd.insertion.start for representative in representatives
+    } == {2, 8}
+    assert all(
+        representative.canonical_allele == calls[0].canonical_allele
+        for representative in representatives
+    )
 
 
-def test_call_exact_itds_are_independent_of_input_order_for_distinct_breakpoints() -> None:
+def test_call_exact_itds_canonical_identity_is_independent_of_input_order() -> None:
     reference = "AAACCCGGGTTT"
     alignments = [
         make_alignment(
@@ -362,14 +375,112 @@ def test_call_exact_itds_are_independent_of_input_order_for_distinct_breakpoints
     reversed_calls = call_exact_itds(list(reversed(alignments)), reference)
 
     assert calls == reversed_calls
-    assert [
-        (
-            call.itd.insertion.start,
-            call.supporting_fragment_count,
-            call.observed_supporting_fragment_fraction,
+    assert len(calls) == 1
+    assert calls[0].itd.insertion.start == 2
+    assert calls[0].supporting_fragment_count == 2
+    assert calls[0].observed_supporting_fragment_fraction == 1.0
+
+
+def test_call_exact_itds_reconciles_equivalent_mate_gap_placements() -> None:
+    reference = "AAACCCGGGTTT"
+    mutant = "AAACCCGGGCCCGGGTTT"
+    alignments = [
+        make_alignment(
+            "equivalent/1",
+            mutant,
+            mutant,
+            "AAACCCGGG------TTT",
+            fragment_id="equivalent",
+        ),
+        make_alignment(
+            "equivalent/2",
+            mutant,
+            mutant,
+            "AAA------CCCGGGTTT",
+            direction="reverse",
+            fragment_id="equivalent",
+        ),
+    ]
+
+    calls = call_exact_itds(
+        alignments,
+        reference,
+        filters=permissive_filters(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].supporting_fragment_count == 1
+    assert calls[0].concordant_fragment_count == 1
+    assert calls[0].discordant_fragment_count == 0
+    assert calls[0].unresolved_fragment_count == 0
+
+
+def test_canonical_support_is_eligible_when_raw_read_does_not_span_canonical_gap() -> None:
+    reference = "AAACCCGGGTTT"
+    alignment = make_alignment(
+        "right-placement",
+        "CCCGGGCCCGGGTTT",
+        "---CCCGGGCCCGGGTTT",
+        "AAACCCGGG------TTT",
+    )
+
+    calls = call_exact_itds(
+        [alignment],
+        reference,
+        filters=permissive_filters(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].canonical_allele is not None
+    assert calls[0].canonical_allele.start == 2
+    assert calls[0].supporting_fragment_count == 1
+    assert calls[0].spanning_fragment_count == 1
+
+
+def test_call_exact_itds_combines_all_true_flt3_gap_placements() -> None:
+    reference_path = (
+        Path(__file__).parent / "data" / "synthetic_flt3" / "reference.fa"
+    )
+    reference = "".join(reference_path.read_text().splitlines()[1:])
+    copied = reference[79:94]
+    alternate = reference[:79] + copied + reference[79:]
+    alignments = [
+        make_alignment(
+            f"placement-{insertion_index}",
+            alternate,
+            alternate,
+            (
+                reference[:insertion_index]
+                + "-" * len(copied)
+                + reference[insertion_index:]
+            ),
         )
-        for call in calls
-    ] == [(2, 1, 0.5), (8, 1, 0.5)]
+        for insertion_index in range(len(reference) + 1)
+        if (
+            alternate[:insertion_index] == reference[:insertion_index]
+            and alternate[insertion_index + len(copied) :]
+            == reference[insertion_index:]
+        )
+    ]
+
+    calls = call_exact_itds(
+        alignments,
+        reference,
+        filters=ITDFilter(
+            min_supporting_fragment_count=1,
+            min_spanning_fragment_count=0,
+            min_observed_supporting_fragment_fraction=0,
+            max_single_direction_fraction=1,
+        ),
+    )
+
+    assert len(alignments) == 16
+    assert len(calls) == 1
+    assert calls[0].supporting_fragment_count == 16
+    assert calls[0].spanning_fragment_count == 16
+    assert calls[0].observed_supporting_fragment_fraction == 1.0
+    assert calls[0].canonical_allele is not None
+    assert calls[0].canonical_allele.alternate_sequence(reference) == alternate
 
 
 def test_call_exact_itds_counts_overlapping_mates_once_per_fragment() -> None:
