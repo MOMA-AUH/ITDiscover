@@ -67,8 +67,8 @@ The reads are synthetic and the default thresholds are research defaults, so
 this example demonstrates interpretation of ITDiscover output rather than a
 validated clinical result.
 
-The `--output` flag writes a concise HTML result summary containing the sample
-outcome, high-level QC, and essential facts for passing duplications. The
+The `--output` flag writes a concise HTML result summary containing high-level
+QC and essential facts for passing duplications. The
 `--output-tsv` flag writes the complete call, QC, settings, and audit details as
 tab-separated data.
 
@@ -179,9 +179,9 @@ ITD candidates are present, while the outcome continues to state that no
 otherwise adequate sample that has a passing ITD call; their count and details
 remain available in the TSV report.
 
-The concise HTML report retains the outcome, QC status and reasons, usable
-fragment count, alignment pass rate, median coverage, and counts of passing and
-filtered calls. The TSV report retains the complete input, preprocessing,
+The concise HTML report retains QC status and reasons, usable fragment count,
+alignment pass rate, median coverage, and counts of passing and filtered calls.
+The TSV report retains the complete input, preprocessing,
 alignment, coverage, threshold, reference, and audit details. A malformed input
 can therefore be distinguished from an inadequate assay and from an adequate
 no-call sample.

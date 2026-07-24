@@ -11,6 +11,7 @@ from itdiscover.calls import (
     ConsolidatedAlleleMember,
     ITDCall,
     ITDConsolidationSettings,
+    UniqueSupportRepresentative,
 )
 from itdiscover.insertions import Alignment
 from itdiscover.insertions import Insertion
@@ -270,9 +271,10 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert filtered["Filter Reasons"] == "LOW_MUTANT_FRAGMENT_COUNT"
 
     html_report = html_path.read_text(encoding="utf-8")
-    assert "Sample synthetic-flt3" in html_report
-    assert "ITD detected" in html_report
-    assert "QC Status: pass" in html_report
+    assert '<div class="sample-name">ITDiscover Report</div>' in html_report
+    assert '<h2 class="outcome">synthetic-flt3</h2>' in html_report
+    assert "ITD detected" not in html_report
+    assert "QC Status:</span><span class=\"status-value status-value--success\">PASS" in html_report
     assert "AGAGAATATGAATAT" in html_report
     assert "Reference coordinates are 1-based" in html_report
     assert "80–94" in html_report
@@ -281,9 +283,20 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert "25.0%" in html_report
     assert "Mutant fragments</dt><dd>3" in html_report
     assert "Informative fragments</dt><dd>12" in html_report
+    assert "Representative alignment" not in html_report
+    assert '<section class="alignment">' in html_report
+    assert '<details class="filtered-variants">' in html_report
+    assert "Filtered variant (1)" in html_report
+    assert "LOW-SUPPORT" in html_report
+    assert 'class="filter-reason" title="Mutant-supporting fragment count is below the configured minimum."' in html_report
+    assert "text-transform: uppercase" not in html_report
+    assert 'class="alignment-ruler"' in html_report
+    assert "copied reference</span>" in html_report
+    assert "spacer</span>" in html_report
+    assert "mismatch</span>" in html_report
+    assert 'class="inserted-region"' in html_report
     assert "1 filtered candidate" in html_report
     assert "Inserted sequence pileup" not in html_report
-    assert "Representative alignment" not in html_report
     assert "CALL THRESHOLDS" not in html_report
 
 
@@ -410,9 +423,9 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     assert capsys.readouterr().out == ""
     report = report_path.read_text(encoding="utf-8")
     assert "<title>ITDiscover Report</title>" in report
-    assert "<h1>ITDiscover Report</h1>" in report
-    assert "indeterminate" in report
-    assert "QC Status: fail" in report
+    assert "<h1>ITDiscover Report</h1>" not in report
+    assert '<h2 class="outcome">' not in report
+    assert "QC Status:</span><span class=\"status-value status-value--failure\">FAIL" in report
     assert "No passing ITD result is available" in report
     assert "See the TSV output for full QC metrics, thresholds, and audit details" in report
     assert "CALL THRESHOLDS" not in report
@@ -674,9 +687,9 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
 
     assert capsys.readouterr().out == ""
     report = html_path.read_text(encoding="utf-8")
-    assert "Sample negative" in report
-    assert "QC Status: pass" in report
-    assert "no passing ITD detected" in report
+    assert '<div class="sample-name">ITDiscover Report</div>' in report
+    assert '<h2 class="outcome">' not in report
+    assert "QC Status:</span><span class=\"status-value status-value--success\">PASS" in report
     assert "No passing ITD was detected." in report
     rows = list(
         csv.reader(tsv_path.read_text(encoding="utf-8").splitlines(), delimiter="\t")
@@ -776,8 +789,8 @@ def test_analysis_error_report_is_indeterminate(tmp_path) -> None:
 
     report = report_path.read_text(encoding="utf-8")
     assert "Analysis Status" in report
-    assert "error" in report
-    assert "indeterminate" in report
+    assert "ERROR" in report
+    assert '<h2 class="outcome">' not in report
     assert "ANALYSIS_ERROR" in report
     assert "ITD calling did not complete" in report
 
@@ -999,8 +1012,8 @@ def test_call_command_writes_concise_html_report(tmp_path, capsys) -> None:
     assert capsys.readouterr().out == ""
     report = report_path.read_text(encoding="utf-8")
     assert "<title>ITDiscover Report</title>" in report
-    assert "<h1>ITDiscover Report</h1>" in report
-    assert "indeterminate" in report
+    assert "<h1>ITDiscover Report</h1>" not in report
+    assert '<h2 class="outcome">' not in report
     assert "No passing ITD result is available" in report
     assert "Representative alignment" not in report
     assert "Inserted sequence pileup" not in report
@@ -1074,16 +1087,79 @@ def test_html_report_orders_itds_by_support_count_descending(tmp_path) -> None:
     cli._write_html_report(
         report_path,
         calls,
+        [],
     )
 
     report = report_path.read_text(encoding="utf-8")
     assert report.index("CCCGGG") < report.index("TTT")
-    assert "<h3>ITD 1</h3>" in report
-    assert "<h3>ITD 2</h3>" in report
+    assert "ITD 1" not in report
+    assert "ITD 2" not in report
     assert "FLT3 internal tandem duplication" not in report
     assert "Minor-variant consolidation" not in report
     assert "sequence=CCCCGG" not in report
     assert "Inserted sequence pileup" not in report
+
+
+def test_representative_alignment_prefers_common_exact_support() -> None:
+    itd = ITD(
+        insertion=Insertion(
+            read_id="exact-high",
+            fragment_id="fragment",
+            start=2,
+            sequence="CCCGGG",
+            direction="forward",
+        ),
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
+    )
+    allele = CanonicalInsertionAllele(start=2, sequence="CCCGGG")
+
+    def representative(
+        read_id: str,
+        *,
+        support_count: int,
+        exact_support_count: int,
+        mismatches: int,
+    ) -> UniqueSupportRepresentative:
+        return UniqueSupportRepresentative(
+            itd=itd,
+            signature=read_id,
+            alignment=Alignment(
+                read_id=read_id,
+                fragment_id=read_id,
+                read_sequence="AAACCCGGGCCCGGGTTT",
+                aligned_reference="AAACCCGGG------TTT",
+                aligned_read="AAACCCGGGCCCGGGTTT",
+                direction="forward",
+            ),
+            canonical_allele=allele,
+            support_count=support_count,
+            exact_support_count=exact_support_count,
+            mismatches=mismatches,
+        )
+
+    fuzzy_high = representative(
+        "fuzzy-high",
+        support_count=10,
+        exact_support_count=0,
+        mismatches=1,
+    )
+    exact_low = representative(
+        "exact-low",
+        support_count=1,
+        exact_support_count=1,
+        mismatches=0,
+    )
+    exact_high = representative(
+        "exact-high",
+        support_count=3,
+        exact_support_count=3,
+        mismatches=0,
+    )
+
+    assert cli._best_representative(
+        [fuzzy_high, exact_low, exact_high]
+    ) == exact_high
 
 
 def test_alignment_difference_classes_do_not_color_indels_yellow() -> None:
@@ -1166,6 +1242,51 @@ def test_alignment_difference_classes_color_spacers_and_inserted_sequence() -> N
         "spacer-region",
         "spacer-region",
     ]
+
+
+def test_representative_alignment_highlights_all_evidence_categories() -> None:
+    itd = ITD(
+        insertion=Insertion(
+            read_id="read",
+            fragment_id="fragment",
+            start=2,
+            sequence="NNNCCCGGGNN",
+            direction="forward",
+        ),
+        copied_segment_start=3,
+        copied_segment_sequence="CCCGGG",
+        spacer_prefix="NNN",
+        spacer_suffix="NN",
+    )
+    representative = UniqueSupportRepresentative(
+        itd=itd,
+        signature="support",
+        alignment=Alignment(
+            read_id="read",
+            fragment_id="fragment",
+            read_sequence="AAANNNCCCGGGNNCCCGGGTTA",
+            aligned_reference="AAA-----------CCCGGGTTT",
+            aligned_read="AAANNNCCCGGGNNCCCGGGTTA",
+            direction="forward",
+        ),
+        canonical_allele=CanonicalInsertionAllele(start=2, sequence="NNNCCCGGGNN"),
+        support_count=1,
+        exact_support_count=1,
+    )
+
+    alignment_html = cli._render_html_representative_alignment(representative)
+
+    assert 'class="tandem-region"' in alignment_html
+    assert 'class="inserted-region"' in alignment_html
+    assert 'class="spacer-region"' in alignment_html
+    assert 'class="diff"' in alignment_html
+
+
+def test_reference_position_markers_are_1_based_and_ignore_alignment_gaps() -> None:
+    markers = cli._render_reference_position_markers("AAA---CCCGGGTTT")
+
+    assert ">10</span>" in markers
+    assert 'left: calc(11ch + 12ch)' in markers
 
 
 def test_call_command_rejects_non_html_output_path(tmp_path, capsys) -> None:

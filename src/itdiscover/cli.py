@@ -18,6 +18,7 @@ from .calls import (
     ITDCall,
     ITDConsolidationSettings,
     ITDFilter,
+    UniqueSupportRepresentative,
     call_exact_itds_with_representatives,
     call_fuzzy_itds_with_representatives,
 )
@@ -52,6 +53,41 @@ COORDINATE_CONVENTION = (
     "reference base. Before/after describes this coordinate representation, not "
     "a biological direction of copying."
 )
+
+FILTER_REASON_LABELS: dict[str, tuple[str, str]] = {
+    "PARTIAL_OBSERVATION": (
+        "PARTIAL",
+        "The insertion is observed at a read edge, so the full ITD cannot be reconstructed.",
+    ),
+    "ONLY_CONFLICTING_MATE_EVIDENCE": (
+        "CONFLICT",
+        "Only conflicting mate evidence was observed for this candidate.",
+    ),
+    "ONLY_UNRESOLVED_EVIDENCE": (
+        "UNRESOLVED",
+        "Only unresolved evidence was observed for this candidate.",
+    ),
+    "AMBIGUOUS_EVIDENCE_DOMINATES": (
+        "AMBIGUOUS",
+        "Conflicting and unresolved evidence exceeds mutant and wild-type evidence.",
+    ),
+    "LOW_MUTANT_FRAGMENT_COUNT": (
+        "LOW-SUPPORT",
+        "Mutant-supporting fragment count is below the configured minimum.",
+    ),
+    "LOW_INFORMATIVE_FRAGMENT_COUNT": (
+        "LOW-DEPTH",
+        "Informative fragment count is below the configured minimum.",
+    ),
+    "LOW_MUTANT_FRAGMENT_FRACTION": (
+        "LOW-FRACTION",
+        "Observed mutant-fragment fraction is below the configured minimum.",
+    ),
+    "DIRECTION_BIAS": (
+        "BIASED",
+        "Directional mutant fractions are more imbalanced than the configured limit.",
+    ),
+}
 
 
 class OptionalDefaultsHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
@@ -424,7 +460,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
         else args.min_copied_segment_length
     )
     if args.max_copy_mismatch_rate == 0:
-        calls, _ = call_exact_itds_with_representatives(
+        calls, representatives = call_exact_itds_with_representatives(
             alignments,
             reference,
             min_insert_length=args.min_insert_length,
@@ -435,7 +471,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             consolidation=consolidation,
         )
     else:
-        calls, _ = call_fuzzy_itds_with_representatives(
+        calls, representatives = call_fuzzy_itds_with_representatives(
             alignments,
             reference,
             max_copy_mismatch_rate=args.max_copy_mismatch_rate,
@@ -458,7 +494,9 @@ def _run_call_command(args: argparse.Namespace) -> int:
         _write_html_report(
             args.output,
             calls,
+            representatives,
             sample_result=sample_result,
+            show_sample_id=bool(args.sample_id),
         )
     if args.output_tsv:
         _write_tsv_call_report(
@@ -601,7 +639,9 @@ def _write_analysis_error_reports(
             _write_html_report(
                 args.output,
                 [],
+                [],
                 sample_result=result,
+                show_sample_id=bool(args.sample_id),
             )
         except Exception:
             pass
@@ -731,27 +771,44 @@ def _iter_fasta_sequences(handle: TextIO) -> list[str]:
 def _write_html_report(
     path: Path,
     calls: list[ITDCall],
+    representatives: list[UniqueSupportRepresentative],
     *,
     sample_result: SampleResult | None = None,
+    show_sample_id: bool = False,
 ) -> None:
-    sections: list[str] = []
+    representatives_by_allele: dict[
+        object, list[UniqueSupportRepresentative]
+    ] = {}
+    for representative in representatives:
+        representatives_by_allele.setdefault(
+            representative.canonical_allele,
+            [],
+        ).append(representative)
+
     show_calls = sample_result is None or sample_result.outcome == "ITD detected"
     ordered_calls = sorted(
         (call for call in calls if show_calls and call.status == "PASS"),
-        key=lambda call: (
-            -call.mutant_fragment_count,
-            call.itd.insertion.start,
-            call.itd.copied_segment_start,
-            call.itd.copied_segment_sequence,
-            call.itd.spacer_prefix,
-            call.itd.spacer_suffix,
-            call.itd.insertion.sequence,
-        ),
+        key=_html_call_sort_key,
     )
-    for index, call in enumerate(ordered_calls, start=1):
-        sections.append(_render_html_call_section(call, index))
+    sections = [
+        _render_html_call_section(
+            call,
+            _best_representative(
+                representatives_by_allele.get(call.canonical_allele, [])
+            ),
+        )
+        for call in ordered_calls
+    ]
+    filtered_calls = sorted(
+        (call for call in calls if call.status != "PASS"),
+        key=_html_call_sort_key,
+    )
+    filtered_variants = _render_html_filtered_variants(
+        filtered_calls,
+        representatives_by_allele,
+    )
 
-    sample_summary = _render_html_sample_summary(sample_result)
+    sample_summary = _render_html_sample_summary(sample_result, show_sample_id)
     empty_state = "" if sections else _render_html_empty_state(sample_result)
 
     document = """<!DOCTYPE html>
@@ -785,16 +842,6 @@ def _write_html_report(
       max-width: 860px;
       margin: 0 auto;
     }
-    h1 {
-      margin: 0 0 22px;
-      font-size: 24px;
-      font-weight: 650;
-    }
-    .coordinate-note {
-      margin: -16px 0 22px;
-      color: var(--muted);
-      font-size: 13px;
-    }
     h2, h3 { margin: 0; }
     .sample-result, .itd, .empty-state {
       background: white;
@@ -808,7 +855,6 @@ def _write_html_report(
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
-      text-transform: uppercase;
       letter-spacing: 0.07em;
     }
     .outcome {
@@ -823,19 +869,47 @@ def _write_html_report(
       margin-bottom: 16px;
     }
     .status {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 4px 9px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       font-size: 13px;
       font-weight: 650;
     }
-    .status--pass { color: var(--pass); background: var(--pass-bg); }
-    .status--warn { color: var(--warn); background: var(--warn-bg); }
-    .status--fail, .status--error {
-      color: var(--fail);
-      background: var(--fail-bg);
+    .status-value, .filter-reason {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 9px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.02em;
+      line-height: 1.35;
     }
-    .status--complete { color: var(--muted); background: var(--panel); }
+    .status-value--success {
+      color: #166534;
+      background: #bbf7d0;
+      border-color: #4ade80;
+    }
+    .status-value--failure {
+      color: #991b1b;
+      background: #fecaca;
+      border-color: #f87171;
+    }
+    .filter-reasons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .filter-reason {
+      color: #991b1b;
+      background: #fecaca;
+      border-color: #f87171;
+      padding: 1px 6px;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      cursor: help;
+    }
     .summary {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
@@ -868,9 +942,99 @@ def _write_html_report(
       border-radius: 7px;
       padding: 10px 12px;
     }
-    .itd h3 {
-      margin: 3px 0 0;
-      font-size: 20px;
+    .itd .summary { margin-top: 0; }
+    .alignment {
+      margin-top: 18px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+    .alignment-block {
+      margin-top: 10px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      padding-top: 32px;
+      background: var(--panel);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      position: relative;
+    }
+    .alignment-row { white-space: pre; }
+    .alignment-label { color: var(--muted); }
+    .alignment-ruler {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      height: 16px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .position-marker {
+      position: absolute;
+      top: 0;
+      color: var(--ink);
+      font-weight: 700;
+      transform: translateX(-50%);
+    }
+    .alignment-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-chip {
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .tandem-region {
+      background: #dcfce7;
+      color: #166534;
+      font-weight: 700;
+    }
+    .inserted-region {
+      background: #dbeafe;
+      color: #12315d;
+      font-weight: 700;
+    }
+    .spacer-region {
+      background: #fef3c7;
+      color: #92400e;
+      font-weight: 700;
+    }
+    .diff, .insert-mismatch {
+      background: #fee2e2;
+      color: #b91c1c;
+      font-weight: 700;
+    }
+    .filtered-variants {
+      margin-bottom: 18px;
+      padding: 18px 22px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
+    }
+    .filtered-variants summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .filtered-variants-content {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+      min-width: 0;
+    }
+    .filtered-variant {
+      margin: 0;
+      min-width: 0;
     }
     @media (max-width: 520px) {
       body { padding: 24px 12px; }
@@ -880,11 +1044,10 @@ def _write_html_report(
 </head>
 <body>
   <main>
-    <h1>ITDiscover Report</h1>
-    <p class="coordinate-note">Reference coordinates are 1-based.</p>
     __SAMPLE_SUMMARY__
     __EMPTY_STATE__
     __SECTIONS__
+    __FILTERED_VARIANTS__
   </main>
 </body>
 </html>
@@ -894,7 +1057,8 @@ def _write_html_report(
     path.write_text(
         document.replace("__SAMPLE_SUMMARY__", sample_summary)
         .replace("__EMPTY_STATE__", empty_state)
-        .replace("__SECTIONS__", "\n".join(sections)),
+        .replace("__SECTIONS__", "\n".join(sections))
+        .replace("__FILTERED_VARIANTS__", filtered_variants),
         encoding="utf-8",
     )
 
@@ -1265,6 +1429,7 @@ def _render_html_empty_state(result: SampleResult | None) -> str:
 
 def _render_html_sample_summary(
     result: SampleResult | None,
+    show_sample_id: bool,
 ) -> str:
     if result is None:
         return ""
@@ -1303,33 +1468,87 @@ def _render_html_sample_summary(
     candidate_word = (
         "candidate" if result.filtered_candidate_count == 1 else "candidates"
     )
+    analysis_status_class = (
+        "success" if result.analysis_status == "complete" else "failure"
+    )
+    qc_status_class = "success" if result.qc_status == "pass" else "failure"
+    sample_title_html = (
+        f'<h2 class="outcome">{html.escape(result.sample_id)}</h2>'
+        if show_sample_id
+        else ""
+    )
     return (
         '<section class="sample-result">'
-        f'<div class="sample-name">Sample {html.escape(result.sample_id)}</div>'
-        f'<h2 class="outcome">{html.escape(result.outcome)}</h2>'
+        '<div class="sample-name">ITDiscover Report</div>'
+        f"{sample_title_html}"
         '<div class="status-row">'
-        f'<span class="status status--{html.escape(result.analysis_status)}">'
-        f'Analysis Status: {html.escape(result.analysis_status)}</span>'
-        f'<span class="status status--{html.escape(result.qc_status)}">'
-        f'QC Status: {html.escape(result.qc_status)}</span>'
+        '<span class="status"><span>Analysis Status:</span>'
+        f'<span class="status-value status-value--{analysis_status_class}">'
+        f'{html.escape(result.analysis_status.upper())}</span></span>'
+        '<span class="status"><span>QC Status:</span>'
+        f'<span class="status-value status-value--{qc_status_class}">'
+        f'{html.escape(result.qc_status.upper())}</span></span>'
         "</div>"
         f'<dl class="summary">{value_html}</dl>'
         f"{qc_reasons}{error_message}"
         f'<p class="note">{result.passing_call_count} passing {call_word}; '
         f'{result.filtered_candidate_count} filtered {candidate_word}. '
-        "See the TSV output for full QC metrics, thresholds, and audit details.</p>"
+        "Reference coordinates are 1-based. See the TSV output for full QC "
+        "metrics, thresholds, and audit details.</p>"
         "</section>"
     )
 
 
-def _render_html_call_section(call: ITDCall, index: int) -> str:
+def _html_call_sort_key(call: ITDCall) -> tuple[object, ...]:
+    return (
+        -call.mutant_fragment_count,
+        call.itd.insertion.start,
+        call.itd.copied_segment_start,
+        call.itd.copied_segment_sequence,
+        call.itd.spacer_prefix,
+        call.itd.spacer_suffix,
+        call.itd.insertion.sequence,
+    )
+
+
+def _render_html_filtered_variants(
+    calls: list[ITDCall],
+    representatives_by_allele: dict[object, list[UniqueSupportRepresentative]],
+) -> str:
+    if not calls:
+        return ""
+    variant_word = "variant" if len(calls) == 1 else "variants"
+    cards = "".join(
+        _render_html_call_section(
+            call,
+            _best_representative(
+                representatives_by_allele.get(call.canonical_allele, [])
+            ),
+            filtered=True,
+        )
+        for call in calls
+    )
+    return (
+        '<details class="filtered-variants">'
+        f"<summary>Filtered {variant_word} ({len(calls)})</summary>"
+        f'<div class="filtered-variants-content">{cards}</div>'
+        "</details>"
+    )
+
+
+def _render_html_call_section(
+    call: ITDCall,
+    representative: UniqueSupportRepresentative | None,
+    *,
+    filtered: bool = False,
+) -> str:
     insertion_label = "Insertion after reference base"
     insertion_position = str(call.itd.insertion.start + 1)
     if call.itd.insertion.start == -1:
         insertion_label = "Insertion position"
         insertion_position = "Before reference base 1"
 
-    summary = (
+    summary: tuple[tuple[str, str], ...] = (
         ("Inserted sequence", call.itd.insertion.sequence),
         (insertion_label, insertion_position),
         (
@@ -1344,6 +1563,8 @@ def _render_html_call_section(call: ITDCall, index: int) -> str:
         ('Mutant fragments', str(call.mutant_fragment_count)),
         ('Informative fragments', str(call.informative_fragment_count)),
     )
+    if filtered:
+        summary += (("Filter reasons", ""),)
     summary_parts: list[str] = []
     for label, value in summary:
         css_class = (
@@ -1351,17 +1572,141 @@ def _render_html_call_section(call: ITDCall, index: int) -> str:
             if label in {"Inserted sequence", "Copied sequence"}
             else ""
         )
-        summary_parts.append(
-            f"<div><dt>{html.escape(label)}</dt>"
-            f"<dd{css_class}>{html.escape(value)}</dd></div>"
-        )
+        if label == "Filter reasons":
+            summary_parts.append(
+                f"<div><dt>{html.escape(label)}</dt>"
+                f'<dd class="filter-reasons">'
+                f"{_render_html_filter_reason_labels(call)}</dd></div>"
+            )
+        else:
+            summary_parts.append(
+                f"<div><dt>{html.escape(label)}</dt>"
+                f"<dd{css_class}>{html.escape(value)}</dd></div>"
+            )
     summary_html = "".join(summary_parts)
+    alignment_html = (
+        _render_html_representative_alignment(representative)
+        if representative is not None
+        else ""
+    )
     return (
-        '<section class="itd">'
-        f'<h3>ITD {index}</h3>'
+        f'<section class="itd{" filtered-variant" if filtered else ""}">'
         f'<dl class="summary">{summary_html}</dl>'
+        f"{alignment_html}"
         "</section>"
     )
+
+
+def _render_html_filter_reason_labels(call: ITDCall) -> str:
+    labels: list[str] = []
+    for reason in call.filter_reasons:
+        label, description = FILTER_REASON_LABELS.get(
+            reason,
+            (reason.replace("_", "-"), reason.replace("_", " ").capitalize()),
+        )
+        labels.append(
+            f'<span class="filter-reason" title="'
+            f'{html.escape(description, quote=True)}">{html.escape(label)}</span>'
+        )
+    return "".join(labels)
+
+
+def _best_representative(
+    representatives: list[UniqueSupportRepresentative],
+) -> UniqueSupportRepresentative | None:
+    if not representatives:
+        return None
+    return min(
+        representatives,
+        key=lambda representative: (
+            representative.exact_support_count == 0,
+            -representative.exact_support_count,
+            -representative.support_count,
+            representative.mismatches,
+            representative.signature,
+            representative.alignment.read_id,
+        ),
+    )
+
+
+def _render_html_representative_alignment(
+    representative: UniqueSupportRepresentative,
+) -> str:
+    alignment = representative.alignment
+    reference_html = _highlight_alignment(
+        alignment.aligned_reference,
+        _reference_tandem_classes(alignment.aligned_reference, representative.itd),
+    )
+    read_html = _highlight_alignment(
+        alignment.aligned_read,
+        _alignment_difference_classes(alignment, representative.itd),
+    )
+    position_markers = _render_reference_position_markers(
+        alignment.aligned_reference
+    )
+    return (
+        '<section class="alignment">'
+        '<div class="alignment-legend">'
+        '<span class="legend-item"><span class="legend-chip tandem-region">C</span>copied reference</span>'
+        '<span class="legend-item"><span class="legend-chip inserted-region">I</span>inserted</span>'
+        '<span class="legend-item"><span class="legend-chip spacer-region">S</span>spacer</span>'
+        '<span class="legend-item"><span class="legend-chip diff">M</span>mismatch</span>'
+        '</div>'
+        '<div class="alignment-block">'
+        f'<div class="alignment-ruler"><span class="alignment-label">position   </span>{position_markers}</div>'
+        '<div class="alignment-row"><span class="alignment-label">reference  </span>'
+        f"{reference_html}</div>"
+        '<div class="alignment-row"><span class="alignment-label">read       </span>'
+        f"{read_html}</div>"
+        "</div>"
+        "</section>"
+    )
+
+
+def _highlight_alignment(sequence: str, classes: list[str | None]) -> str:
+    fragments: list[str] = []
+    for base, css_class in zip(sequence, classes, strict=True):
+        escaped_base = html.escape(base)
+        if css_class is not None:
+            fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
+        else:
+            fragments.append(escaped_base)
+    return "".join(fragments)
+
+
+def _render_reference_position_markers(
+    aligned_reference: str,
+    interval: int = 10,
+) -> str:
+    reference_position = 0
+    markers: list[str] = []
+    for alignment_index, base in enumerate(aligned_reference):
+        if base == "-":
+            continue
+        reference_position += 1
+        if reference_position % interval == 0:
+            markers.append(
+                f'<span class="position-marker" '
+                f'style="left: calc(11ch + {alignment_index}ch)">'
+                f"{reference_position}</span>"
+            )
+    return "".join(markers)
+
+
+def _reference_tandem_classes(
+    aligned_reference: str,
+    itd: ITD,
+) -> list[str | None]:
+    classes: list[str | None] = []
+    reference_position = -1
+    for base in aligned_reference:
+        css_class = None
+        if base != "-":
+            reference_position += 1
+            if itd.copied_segment_start <= reference_position <= itd.copied_segment_end:
+                css_class = "tandem-region"
+        classes.append(css_class)
+    return classes
 
 
 def _alignment_difference_classes(
