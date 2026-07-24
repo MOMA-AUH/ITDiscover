@@ -50,8 +50,8 @@ The expected primary result is:
 | QC status | `pass` |
 | Outcome | `ITD detected` |
 | Inserted sequence | `AGAGAATATGAATAT` |
-| Insertion coordinate | after reference base 78 |
-| Copied reference segment | bases 79–93, immediately after the insertion |
+| Insertion coordinate | after reference base 79 |
+| Copied reference segment | bases 80–94, immediately after the insertion |
 | Mutant fragments | 3 |
 | Wild-type fragments | 9 |
 | Informative fragments | 12 |
@@ -67,9 +67,10 @@ The reads are synthetic and the default thresholds are research defaults, so
 this example demonstrates interpretation of ITDiscover output rather than a
 validated clinical result.
 
-The `--output` flag writes an HTML report with one representative alignment per
-called duplication. The `--output-tsv` flag writes the same call and QC facts
-as tab-separated data.
+The `--output` flag writes a concise HTML result summary containing the sample
+outcome, high-level QC, and essential facts for passing duplications. The
+`--output-tsv` flag writes the complete call, QC, settings, and audit details as
+tab-separated data.
 
 By default, `PASS` requires at least 3 mutant fragments, 10 informative
 fragments, and an observed mutant-fragment fraction of 0.01. These are
@@ -127,9 +128,9 @@ best-supported anchor only when:
 
 Assignments are never chained through another minor allele. Fragment and mate
 consensus is recalculated after assignment, so a fragment is still counted at
-most once. HTML and TSV reports record the settings and list every absorbed
-allele with its evidence-passing raw fragment support, raw sequence mismatch
-count and rate, raw breakpoint shift and rate, and reason. This makes
+most once. TSV reports record the settings and list every absorbed allele with
+its evidence-passing raw fragment support, raw sequence mismatch count and
+rate, raw breakpoint shift and rate, and reason. This makes
 aggressive exploratory settings auditable rather than silently hiding minor
 observations.
 
@@ -176,31 +177,28 @@ An otherwise adequate sample with no passing call is marked `warn` when filtered
 ITD candidates are present, while the outcome continues to state that no
 *passing* ITD was detected. Minor filtered alternatives do not downgrade an
 otherwise adequate sample that has a passing ITD call; their count and details
-remain available in the reports.
+remain available in the TSV report.
 
-HTML and TSV reports retain input fragment/read counts, primer failures and
-retention by direction, length and quality failures, preprocessing-passing
-reads, usable fragments, alignment retention and direction counts, inter-base
-coverage min/median/max, passing call count, filtered candidate count, QC
-reasons, thresholds, and analysis errors. A malformed input can therefore be
-distinguished from an inadequate assay and from an adequate no-call sample.
+The concise HTML report retains the outcome, QC status and reasons, usable
+fragment count, alignment pass rate, median coverage, and counts of passing and
+filtered calls. The TSV report retains the complete input, preprocessing,
+alignment, coverage, threshold, reference, and audit details. A malformed input
+can therefore be distinguished from an inadequate assay and from an adequate
+no-call sample.
 
-Reports identify the reference by its complete FASTA header, sequence length,
-and SHA-256 digest. All reported coordinates are zero-based and local to that
-reference. The insertion coordinate is the reference base immediately before
-the insertion (`-1` means before the first base). The copied segment start is
-zero-based and its end is zero-based and inclusive. Reports state directly
-whether that segment is immediately before or immediately after the insertion.
-This is a description of the displayed coordinates, not a claim about the
-biological direction of copying. In repetitive sequence, the same ALT sequence
-can permit more than one equivalent gap placement. ITDiscover groups those
-placements as one canonical allele before counting fragments; the
-before/after label only explains the selected report representation.
+Both reports use 1-based, reference-local coordinates. The TSV identifies the
+reference by its complete FASTA header, sequence length, and SHA-256 digest. An
+insertion before the first reference base is represented as after base `0`; all
+other insertion coordinates name the reference base immediately before the
+insertion. Copied segment start and end coordinates are 1-based and inclusive.
+In repetitive sequence, the same ALT sequence can permit more than one
+equivalent gap placement. ITDiscover groups those placements as one canonical
+allele before counting fragments.
 
 For example, the bundled FLT3 amplicon example contains an insertion after
-reference base 78. The inserted sequence `AGAGAATATGAATAT` copies reference
-bases 79–93, so the report says that the copied segment is immediately after
-the insertion. These coordinates and bases come from
+reference base 79 in the HTML report. The inserted sequence `AGAGAATATGAATAT`
+copies reference bases 80–94. The TSV reports the same 1-based coordinates.
+These coordinates and bases come from
 `tests/data/synthetic_flt3/reference.fa`, not from a toy repeat.
 
 ## Event-length and frame policy
@@ -216,8 +214,7 @@ by three by default. This narrow FLT3-ITD policy is explicit and can be disabled
 with `--no-require-in-frame` when exploratory or assay-specific analysis should
 retain out-of-frame candidates. Read-edge/partial observations cannot establish
 the full event frame and remain handled as partial evidence. The insertion
-minimum, copied-segment minimum, and frame policy are recorded in HTML and TSV
-output.
+minimum, copied-segment minimum, and frame policy are recorded in TSV output.
 Changing these settings changes the reportable candidate space; it does not by
 itself validate short or out-of-frame events for clinical interpretation.
 

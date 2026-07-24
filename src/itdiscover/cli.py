@@ -18,7 +18,6 @@ from .calls import (
     ITDCall,
     ITDConsolidationSettings,
     ITDFilter,
-    UniqueSupportRepresentative,
     call_exact_itds_with_representatives,
     call_fuzzy_itds_with_representatives,
 )
@@ -45,9 +44,9 @@ from .results import (
 
 
 COORDINATE_CONVENTION = (
-    "Reference-local, zero-based. Insertion coordinate is the reference base "
-    "immediately before the insertion (-1 means before the first base). Copied "
-    "segment start is zero-based; copied segment end is zero-based and inclusive. "
+    "Reference-local, 1-based. Insertion coordinate is the reference base "
+    "immediately before the insertion (0 means before the first base). Copied "
+    "segment start and end are 1-based and inclusive. "
     "The copied segment is immediately before the insertion when it ends at the "
     "insertion coordinate, and immediately after when it starts at the following "
     "reference base. Before/after describes this coordinate representation, not "
@@ -333,7 +332,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=_html_output_path,
-        help="Optional path for an HTML report with one representative alignment per unique support pattern.",
+        help="Optional path for a concise HTML result summary.",
     )
     parser.add_argument(
         "--output-tsv",
@@ -425,7 +424,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
         else args.min_copied_segment_length
     )
     if args.max_copy_mismatch_rate == 0:
-        calls, representatives = call_exact_itds_with_representatives(
+        calls, _ = call_exact_itds_with_representatives(
             alignments,
             reference,
             min_insert_length=args.min_insert_length,
@@ -436,7 +435,7 @@ def _run_call_command(args: argparse.Namespace) -> int:
             consolidation=consolidation,
         )
     else:
-        calls, representatives = call_fuzzy_itds_with_representatives(
+        calls, _ = call_fuzzy_itds_with_representatives(
             alignments,
             reference,
             max_copy_mismatch_rate=args.max_copy_mismatch_rate,
@@ -456,23 +455,10 @@ def _run_call_command(args: argparse.Namespace) -> int:
         thresholds=qc_thresholds,
     )
     if args.output:
-        _write_unique_support_alignment_html_report(
+        _write_html_report(
             args.output,
             calls,
-            representatives,
-            filters=filters,
-            max_copy_mismatch_rate=args.max_copy_mismatch_rate,
-            alignment_filters=alignment_filters,
-            insertion_filters=insertion_filters,
             sample_result=sample_result,
-            qc_thresholds=qc_thresholds,
-            min_insert_length=args.min_insert_length,
-            min_copied_segment_length=min_copied_segment_length,
-            require_in_frame=args.require_in_frame,
-            consolidation=consolidation,
-            reference_id=reference_id,
-            reference_length=len(reference),
-            reference_sha256=reference_sha256,
         )
     if args.output_tsv:
         _write_tsv_call_report(
@@ -612,24 +598,10 @@ def _write_analysis_error_reports(
     consolidation = _build_consolidation_settings(args)
     if args.output:
         try:
-            _write_unique_support_alignment_html_report(
+            _write_html_report(
                 args.output,
                 [],
-                [],
-                max_copy_mismatch_rate=args.max_copy_mismatch_rate,
                 sample_result=result,
-                qc_thresholds=qc_thresholds,
-                min_insert_length=args.min_insert_length,
-                min_copied_segment_length=(
-                    args.min_insert_length
-                    if args.min_copied_segment_length is None
-                    else args.min_copied_segment_length
-                ),
-                require_in_frame=args.require_in_frame,
-                consolidation=consolidation,
-                reference_id=reference_id,
-                reference_length=reference_length,
-                reference_sha256=reference_sha256,
             )
         except Exception:
             pass
@@ -756,35 +728,16 @@ def _iter_fasta_sequences(handle: TextIO) -> list[str]:
     return [sequence for _, sequence in _iter_fasta_records(handle)]
 
 
-def _write_unique_support_alignment_html_report(
+def _write_html_report(
     path: Path,
     calls: list[ITDCall],
-    representatives: list[UniqueSupportRepresentative],
     *,
-    filters: ITDFilter | None = None,
-    max_copy_mismatch_rate: float = 0.0,
-    alignment_filters: AlignmentEvidenceFilter | None = None,
-    insertion_filters: InsertionEvidenceFilter | None = None,
     sample_result: SampleResult | None = None,
-    qc_thresholds: SampleQCThresholds | None = None,
-    min_insert_length: int = 6,
-    min_copied_segment_length: int = 6,
-    require_in_frame: bool = True,
-    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
-    reference_id: str | None = None,
-    reference_length: int | None = None,
-    reference_sha256: str | None = None,
 ) -> None:
-    representatives_by_key: dict[object, list[UniqueSupportRepresentative]] = {}
-    for representative in representatives:
-        representatives_by_key.setdefault(
-            representative.canonical_allele,
-            [],
-        ).append(representative)
-
     sections: list[str] = []
+    show_calls = sample_result is None or sample_result.outcome == "ITD detected"
     ordered_calls = sorted(
-        calls,
+        (call for call in calls if show_calls and call.status == "PASS"),
         key=lambda call: (
             -call.mutant_fragment_count,
             call.itd.insertion.start,
@@ -795,29 +748,10 @@ def _write_unique_support_alignment_html_report(
             call.itd.insertion.sequence,
         ),
     )
-    for call in ordered_calls:
-        call_representatives = representatives_by_key.get(
-            call.canonical_allele,
-            [],
-        )
-        sections.append(_render_html_call_section(call, call_representatives))
+    for index, call in enumerate(ordered_calls, start=1):
+        sections.append(_render_html_call_section(call, index))
 
-    thresholds_section = _render_html_thresholds_section(
-        filters=filters,
-        max_copy_mismatch_rate=max_copy_mismatch_rate,
-        alignment_filters=alignment_filters,
-        insertion_filters=insertion_filters,
-        min_insert_length=min_insert_length,
-        min_copied_segment_length=min_copied_segment_length,
-        require_in_frame=require_in_frame,
-        consolidation=consolidation,
-    )
-    sample_summary = _render_html_sample_summary(sample_result, qc_thresholds)
-    reference_summary = _render_html_reference_summary(
-        reference_id,
-        reference_length,
-        reference_sha256,
-    )
+    sample_summary = _render_html_sample_summary(sample_result)
     empty_state = "" if sections else _render_html_empty_state(sample_result)
 
     document = """<!DOCTYPE html>
@@ -828,269 +762,137 @@ def _write_unique_support_alignment_html_report(
   <style>
     :root {
       color-scheme: light;
-      --ink: #18232f;
-      --muted: #5a6875;
-      --line: #cfd8df;
-      --panel: #f7fafc;
-      --tandem-bg: #dbeafe;
-      --tandem-fg: #12315d;
-      --inserted-bg: #dbeafe;
-      --inserted-fg: #12315d;
-      --spacer-bg: #fef3c7;
-      --spacer-fg: #92400e;
-      --mismatch-bg: #fee2e2;
-      --mismatch-fg: #b91c1c;
+      --ink: #17212b;
+      --muted: #607080;
+      --line: #dce3e8;
+      --panel: #f5f8fa;
+      --pass: #13734b;
+      --pass-bg: #e8f5ee;
+      --warn: #8a5b00;
+      --warn-bg: #fff5d6;
+      --fail: #a33131;
+      --fail-bg: #fdecec;
     }
     body {
-      margin: 24px;
+      margin: 0;
+      padding: 40px 20px;
       color: var(--ink);
       font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.4;
+      line-height: 1.45;
+      background: #eef2f5;
     }
-    h1, h2, h3 {
-      margin: 0 0 12px;
+    main {
+      max-width: 860px;
+      margin: 0 auto;
     }
-    .itd {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 16px;
-      margin-bottom: 20px;
+    h1 {
+      margin: 0 0 22px;
+      font-size: 24px;
+      font-weight: 650;
+    }
+    .coordinate-note {
+      margin: -16px 0 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    h2, h3 { margin: 0; }
+    .sample-result, .itd, .empty-state {
       background: white;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
     }
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 10px 16px;
+    .sample-name {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .outcome {
+      margin: 4px 0 16px;
+      font-size: 26px;
+      line-height: 1.2;
+    }
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-bottom: 16px;
     }
-    .summary div {
-      background: var(--panel);
-      border-radius: 4px;
-      padding: 8px 10px;
+    .status {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .status--pass { color: var(--pass); background: var(--pass-bg); }
+    .status--warn { color: var(--warn); background: var(--warn-bg); }
+    .status--fail, .status--error {
+      color: var(--fail);
+      background: var(--fail-bg);
+    }
+    .status--complete { color: var(--muted); background: var(--panel); }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 14px 22px;
+      margin: 16px 0 0;
     }
     .summary dt {
       margin: 0 0 4px;
       color: var(--muted);
       font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
     .summary dd {
       margin: 0;
-      font-size: 16px;
-      font-weight: 600;
-    }
-    .support {
-      border-top: 1px solid var(--line);
-      padding-top: 14px;
-      margin-top: 14px;
-    }
-    .support-header {
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
-      align-items: baseline;
-    }
-    .support-header strong {
-      font-size: 16px;
-    }
-    .support-meta {
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .legend {
-      display: flex;
-      gap: 12px 18px;
-      flex-wrap: wrap;
-      margin: 0 0 20px;
-      color: var(--ink);
-      font-size: 15px;
-    }
-    .thresholds {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel);
-      padding: 12px 14px;
-      margin: 0 0 20px;
-    }
-    .thresholds-title {
-      margin: 0 0 10px;
-      color: var(--ink);
-      font-size: 14px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-    .thresholds-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 8px 14px;
-    }
-    .thresholds-item {
-      display: grid;
-      gap: 2px;
-    }
-    .thresholds-label {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .thresholds-value {
       font-size: 15px;
       font-weight: 600;
+      overflow-wrap: anywhere;
     }
-    .quantification-note {
-      color: var(--muted);
+    .sequence {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 17px !important;
+      letter-spacing: 0.03em;
+    }
+    .note, .alert {
+      margin: 16px 0 0;
       font-size: 14px;
-      line-height: 1.4;
-      margin: -4px 0 20px;
     }
-    .sample-result, .empty-state {
-      border: 1px solid var(--line);
-      border-radius: 6px;
+    .note { color: var(--muted); }
+    .alert {
       background: var(--panel);
-      padding: 12px 14px;
-      margin: 0 0 20px;
+      border-radius: 7px;
+      padding: 10px 12px;
     }
-    .sample-result h2 { margin-top: 0; }
-    .legend-item {
-      display: inline-flex;
-      gap: 8px;
-      align-items: center;
+    .itd h3 {
+      margin: 3px 0 0;
+      font-size: 20px;
     }
-    .legend-chip {
-      min-width: 1.6em;
-      border: 1px solid rgb(24 35 47 / 18%);
-      border-radius: 4px;
-      padding: 2px 7px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 16px;
-      line-height: 1.25;
-      text-align: center;
-    }
-    .representative-title,
-    .pileup-title {
-      margin: 14px 0 8px;
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .signature {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      background: var(--panel);
-      border-radius: 4px;
-      padding: 6px 8px;
-      margin-bottom: 10px;
-      display: inline-block;
-    }
-    .alignment-block {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      overflow-x: auto;
-      background: #fbfdff;
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 10px;
-    }
-    .alignment-row {
-      white-space: pre;
-    }
-    .match-comparison {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      background: var(--panel);
-      border-radius: 4px;
-      padding: 8px 10px;
-      margin: 0 0 10px;
-      overflow-x: auto;
-    }
-    .match-row {
-      white-space: pre;
-    }
-    .pileup {
-      margin-top: 12px;
-    }
-    .pileup-table {
-      border-collapse: collapse;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      min-width: min(100%, 560px);
-    }
-    .pileup-table th,
-    .pileup-table td {
-      border-bottom: 1px solid var(--line);
-      padding: 5px 8px;
-      text-align: left;
-      white-space: pre;
-    }
-    .pileup-table th {
-      color: var(--muted);
-      font-weight: 600;
-    }
-    .label {
-      color: var(--muted);
-    }
-    .diff {
-      background: var(--mismatch-bg);
-      color: var(--mismatch-fg);
-      font-weight: 700;
-    }
-    .tandem-region {
-      background: var(--tandem-bg);
-      color: var(--tandem-fg);
-      font-weight: 700;
-    }
-    .inserted-region {
-      background: var(--inserted-bg);
-      color: var(--inserted-fg);
-      font-weight: 700;
-    }
-    .spacer-region {
-      background: var(--spacer-bg);
-      color: var(--spacer-fg);
-      font-weight: 700;
-    }
-    .insert-mismatch {
-      background: var(--mismatch-bg);
-      color: var(--mismatch-fg);
-      font-weight: 700;
+    @media (max-width: 520px) {
+      body { padding: 24px 12px; }
+      .sample-result, .itd, .empty-state { padding: 18px; }
     }
   </style>
 </head>
 <body>
-  <h1>ITDiscover Report</h1>
-  __REFERENCE_SUMMARY__
-  __SAMPLE_SUMMARY__
-  __THRESHOLDS__
-  <p class="quantification-note">Observed mutant-fragment fraction = mutant
-  fragments / (mutant + wild-type fragments). Both allele states require the
-  configured high-quality junction anchors. Conflicting, unresolved, and
-  not-informative fragments are reported separately. Overlapping mates count
-  once per fragment. PCR duplicates are not collapsed unless they already
-  share a fragment ID. Direction bias compares the mutant fraction among
-  callable junction opportunities in R1 with the corresponding fraction in
-  R2; it is not evaluated unless both directions meet the configured
-  opportunity threshold.</p>
-  <div class="legend">
-    <span class="legend-item"><span class="legend-chip tandem-region">C</span> copied reference segment</span>
-    <span class="legend-item"><span class="legend-chip inserted-region">I</span> inserted sequence</span>
-    <span class="legend-item"><span class="legend-chip spacer-region">S</span> spacer sequence</span>
-    <span class="legend-item"><span class="legend-chip diff">A</span> mismatches</span>
-  </div>
-  __EMPTY_STATE__
-  __SECTIONS__
+  <main>
+    <h1>ITDiscover Report</h1>
+    <p class="coordinate-note">Reference coordinates are 1-based.</p>
+    __SAMPLE_SUMMARY__
+    __EMPTY_STATE__
+    __SECTIONS__
+  </main>
 </body>
 </html>
 """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        document.replace("__REFERENCE_SUMMARY__", reference_summary)
-        .replace("__SAMPLE_SUMMARY__", sample_summary)
-        .replace("__THRESHOLDS__", thresholds_section)
+        document.replace("__SAMPLE_SUMMARY__", sample_summary)
         .replace("__EMPTY_STATE__", empty_state)
         .replace("__SECTIONS__", "\n".join(sections)),
         encoding="utf-8",
@@ -1129,9 +931,9 @@ def _write_tsv_call_report(
                 "Filter Reasons",
                 "Mode",
                 "Max Copy Mismatch Rate",
-                "Insertion After Reference Base (0-based; -1=before first)",
-                "Copied Segment Start (0-based)",
-                "Copied Segment End (0-based, inclusive)",
+                "Insertion After Reference Base (1-based; 0=before first)",
+                "Copied Segment Start (1-based)",
+                "Copied Segment End (1-based, inclusive)",
                 "Copied Segment Sequence",
                 "Spacer Prefix",
                 "Spacer Suffix",
@@ -1226,9 +1028,9 @@ def _write_tsv_call_report(
                     _format_filter_reasons(call),
                     mode,
                     f"{max_copy_mismatch_rate:.6f}",
-                    call.itd.insertion.start,
-                    call.itd.copied_segment_start,
-                    call.itd.copied_segment_end,
+                    call.itd.insertion.start + 1,
+                    call.itd.copied_segment_start + 1,
+                    call.itd.copied_segment_end + 1,
                     call.itd.copied_segment_sequence,
                     call.itd.spacer_prefix or "-",
                     call.itd.spacer_suffix or "-",
@@ -1454,506 +1256,112 @@ def _render_html_empty_state(result: SampleResult | None) -> str:
         message = "ITD calling did not complete; no biological outcome is available."
     elif result is not None and result.outcome == "indeterminate":
         message = (
-            "No ITD candidates were called, but the result is indeterminate "
-            "because sample QC did not pass."
+            "No passing ITD result is available because sample QC did not pass."
         )
     else:
-        message = "No ITD candidates were called."
+        message = "No passing ITD was detected."
     return f'<section class="empty-state">{html.escape(message)}</section>'
 
 
 def _render_html_sample_summary(
     result: SampleResult | None,
-    thresholds: SampleQCThresholds | None,
 ) -> str:
     if result is None:
         return ""
-    values: list[tuple[str, str]] = [
-        ("Sample", result.sample_id),
-        ("Analysis Status", result.analysis_status),
-        ("QC Status", result.qc_status),
-        ("Outcome", result.outcome),
-        ("QC Reasons", "; ".join(result.qc_reasons) or "None"),
-        ("Passing Calls", str(result.passing_call_count)),
-        ("Filtered Candidates", str(result.filtered_candidate_count)),
-    ]
-    if result.error_message:
-        values.append(("Analysis Error", result.error_message))
+
+    values: list[tuple[str, str]] = []
     if result.preprocessing is not None:
-        metrics = result.preprocessing
-        values.extend(
-            [
-                ("Input Fragments", str(metrics.input_fragment_count)),
-                ("Input Reads", str(metrics.input_read_count)),
-                ("Usable Fragments", str(metrics.usable_fragment_count)),
-                (
-                    "Preprocessing-passing Reads (R1/R2)",
-                    f"{metrics.passing_read_count} "
-                    f"({metrics.passing_forward_read_count}/"
-                    f"{metrics.passing_reverse_read_count})",
-                ),
-                ("Primer-failed Reads", str(metrics.primer_failed_read_count)),
-                ("Length-failed Reads", str(metrics.length_failed_read_count)),
-                ("Quality-failed Reads", str(metrics.quality_failed_read_count)),
-            ]
+        values.append(
+            ("Usable fragments", str(result.preprocessing.usable_fragment_count))
         )
-        if metrics.primer_retained_forward_reads is not None:
-            values.append(
-                (
-                    "Forward Primer-retained Reads",
-                    str(metrics.primer_retained_forward_reads),
-                )
-            )
-        if metrics.primer_retained_reverse_reads is not None:
-            values.append(
-                (
-                    "Reverse Primer-retained Reads",
-                    str(metrics.primer_retained_reverse_reads),
-                )
-            )
     if result.alignment is not None:
-        metrics = result.alignment
-        values.extend(
-            [
-                ("Alignment-passing Reads", str(metrics.passing_read_count)),
-                ("Alignment Pass Fraction", f"{metrics.pass_fraction:.1%}"),
-                (
-                    "Alignment-passing Reads (R1/R2)",
-                    f"{metrics.passing_forward_read_count}/"
-                    f"{metrics.passing_reverse_read_count}",
-                ),
-            ]
+        values.append(
+            ("Alignment pass rate", f"{result.alignment.pass_fraction:.1%}")
         )
     if result.coverage is not None:
         values.append(
-            (
-                "Inter-base Coverage (min/median/max)",
-                f"{result.coverage.minimum}/"
-                f"{result.coverage.median:.1f}/"
-                f"{result.coverage.maximum}",
-            )
+            ("Median coverage", f"{result.coverage.median:.1f}×")
         )
-    if thresholds is not None:
-        values.extend(
-            [
-                ("QC Min Usable Fragments", str(thresholds.min_usable_fragment_count)),
-                (
-                    "QC Min Reads per Direction",
-                    str(thresholds.min_passing_reads_per_direction),
-                ),
-                (
-                    "QC Min Alignment Pass Fraction",
-                    f"{thresholds.min_alignment_pass_fraction:.1%}",
-                ),
-                (
-                    "QC Min Median Coverage",
-                    str(thresholds.min_median_interbase_coverage),
-                ),
-                (
-                    "QC Min Primer Retention",
-                    f"{thresholds.min_primer_retention_fraction:.1%}",
-                ),
-            ]
-        )
+
     value_html = "".join(
         f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>"
         for label, value in values
     )
-    return (
-        '<section class="sample-result">'
-        '<h2>Sample Result and QC</h2>'
-        f'<dl class="summary">{value_html}</dl>'
-        "</section>"
-    )
-
-
-def _render_html_thresholds_section(
-    *,
-    filters: ITDFilter | None,
-    max_copy_mismatch_rate: float,
-    alignment_filters: AlignmentEvidenceFilter | None = None,
-    insertion_filters: InsertionEvidenceFilter | None = None,
-    min_insert_length: int = 6,
-    min_copied_segment_length: int = 6,
-    require_in_frame: bool = True,
-    consolidation: ITDConsolidationSettings = ITDConsolidationSettings(),
-) -> str:
-    items: list[tuple[str, str]] = []
-    if filters is not None:
-        items.extend(
-            [
-                (
-                    "Min mutant fragments",
-                    str(filters.min_mutant_fragment_count),
-                ),
-                (
-                    "Min informative fragments",
-                    str(filters.min_informative_fragment_count),
-                ),
-                (
-                    "Min mutant-fragment fraction",
-                    f"{filters.min_observed_mutant_fragment_fraction:.3%}",
-                ),
-                (
-                    "Max directional mutant-fraction share",
-                    f"{filters.max_directional_mutant_fraction_share:.3f}",
-                ),
-                (
-                    "Min opportunities per direction",
-                    str(filters.min_directional_opportunities),
-                ),
-            ]
-        )
-    items.extend(
-        [
-            (
-                "Max copied-segment mismatch rate",
-                f"{max_copy_mismatch_rate:.3f}",
-            ),
-            ("Min insert length", str(min_insert_length)),
-            ("Min copied-segment length", str(min_copied_segment_length)),
-            ("Require in-frame insertions", "Yes" if require_in_frame else "No"),
-            (
-                "Minor-variant consolidation",
-                "Enabled" if consolidation.enabled else "Disabled",
-            ),
-            (
-                "Consolidation max allele mismatch rate",
-                f"{consolidation.max_allele_mismatch_rate:.3f}",
-            ),
-            (
-                "Consolidation max breakpoint shift rate",
-                f"{consolidation.max_breakpoint_shift_rate:.3f}",
-            ),
-            (
-                "Consolidation max minor/anchor support ratio",
-                f"{consolidation.max_minor_to_anchor_support_ratio:.3f}",
-            ),
-            (
-                "Consolidation min anchor fragments",
-                str(consolidation.min_anchor_fragment_count),
-            ),
-        ]
-    )
-    if alignment_filters is not None:
-        items.extend(
-            [
-                ("Min alignment identity", f"{alignment_filters.min_identity:.3f}"),
-                (
-                    "Min on-target fraction",
-                    f"{alignment_filters.min_on_target_fraction:.3f}",
-                ),
-                (
-                    "Min alignment score",
-                    str(alignment_filters.min_score)
-                    if alignment_filters.min_score is not None
-                    else "Not set",
-                ),
-                (
-                    "Reject ambiguous alignments",
-                    "Yes" if alignment_filters.reject_ambiguous else "No",
-                ),
-            ]
-        )
-    if insertion_filters is not None:
-        items.extend(
-            [
-                (
-                    "Min junction-anchor quality",
-                    str(insertion_filters.min_junction_anchor_quality),
-                ),
-                (
-                    "Min insert mean quality",
-                    f"{insertion_filters.min_insert_mean_quality:.3f}",
-                ),
-                (
-                    "Min insert base quality",
-                    str(insertion_filters.min_insert_base_quality),
-                ),
-                ("Junction flank size", str(insertion_filters.junction_flank_size)),
-            ]
-        )
-
-    item_html = "".join(
-        (
-            '<div class="thresholds-item">'
-            f'<span class="thresholds-label">{html.escape(label)}</span>'
-            f'<span class="thresholds-value">{html.escape(value)}</span>'
-            "</div>"
-        )
-        for label, value in items
-    )
-    return (
-        '<section class="thresholds">'
-        '<div class="thresholds-title"><strong>CALL THRESHOLDS</strong></div>'
-        f'<div class="thresholds-grid">{item_html}</div>'
-        '</section>'
-    )
-
-
-def _render_html_reference_summary(
-    reference_id: str | None,
-    reference_length: int | None,
-    reference_sha256: str | None,
-) -> str:
-    values = (
-        ("Reference FASTA Header", reference_id or "Not provided"),
-        (
-            "Reference Length",
-            str(reference_length) if reference_length is not None else "Not provided",
-        ),
-        ("Reference Sequence SHA-256", reference_sha256 or "Not provided"),
-        ("Coordinate Convention", COORDINATE_CONVENTION),
-    )
-    value_html = "".join(
-        f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>"
-        for label, value in values
-    )
-    return (
-        '<section class="sample-result">'
-        '<h2>Reference and Coordinates</h2>'
-        f'<dl class="summary">{value_html}</dl>'
-        "</section>"
-    )
-
-
-def _render_html_call_section(
-    call: ITDCall,
-    representatives: list[UniqueSupportRepresentative],
-) -> str:
-    summary = (
-        (
-            'Insertion After Reference Base (0-based)',
-            str(call.itd.insertion.start),
-        ),
-        ('Copied Segment Start (0-based)', str(call.itd.copied_segment_start)),
-        (
-            'Copied Segment End (0-based, inclusive)',
-            str(call.itd.copied_segment_end),
-        ),
-        (
-            'Copied Segment Location',
-            f"Immediately {call.itd.copied_segment_location} the insertion",
-        ),
-        ('Copied Segment Sequence', call.itd.copied_segment_sequence),
-        ('Spacer Prefix', call.itd.spacer_prefix or "-"),
-        ('Spacer Suffix', call.itd.spacer_suffix or "-"),
-        (
-            'Read-Edge Observation',
-            'Yes — partial; full ITD not reconstructed'
-            if call.itd.is_partial_observation
-            else 'No',
-        ),
-        ('Mutant Fragments', str(call.mutant_fragment_count)),
-        ('Consolidated Minor Alleles', str(len(call.consolidated_members))),
-        (
-            'Consolidated Minor Raw Fragment Support',
-            str(call.consolidated_minor_fragment_count),
-        ),
-        ('Consolidation Audit', _format_consolidated_members(call)),
-        ('Wild-type Fragments', str(call.wild_type_fragment_count)),
-        ('Informative Fragments', str(call.informative_fragment_count)),
-        (
-            'R1 Evidence',
-            _format_directional_evidence(
-                call.r1_mutant_count,
-                call.r1_opportunity_count,
-            ),
-        ),
-        (
-            'R2 Evidence',
-            _format_directional_evidence(
-                call.r2_mutant_count,
-                call.r2_opportunity_count,
-            ),
-        ),
-        ('Concordant Fragments', str(call.concordant_fragment_count)),
-        ('Single-mate Fragments', str(call.single_mate_fragment_count)),
-        (
-            'Conflicting Fragments',
-            str(call.conflicting_fragment_count),
-        ),
-        (
-            'Unresolved Fragments',
-            str(call.unresolved_fragment_count),
-        ),
-        (
-            'Not-informative Fragments',
-            str(call.not_informative_fragment_count),
-        ),
-        (
-            'Observed Mutant-fragment Fraction',
-            (
-                f"{call.observed_mutant_fragment_fraction:.1%} "
-                f"({call.mutant_fragment_count}/"
-                f"{call.informative_fragment_count} informative fragments)"
-            ),
-        ),
-        ('Status', call.status),
-        ('Filter Reasons', _format_filter_reasons(call)),
-    )
-    summary_html = "".join(
-        f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>"
-        for label, value in summary
-    )
-    representative = _best_representative(representatives)
-    support_html = (
-        _render_html_support_block(representative)
-        if representative is not None
+    qc_reasons = (
+        f'<p class="alert"><strong>QC:</strong> '
+        f'{html.escape("; ".join(result.qc_reasons))}</p>'
+        if result.qc_reasons
         else ""
     )
-    return (
-        f'<section class="itd">'
-        f'<dl class="summary">{summary_html}</dl>'
-        f"{support_html}"
-        f"</section>"
+    error_message = (
+        f'<p class="alert"><strong>Analysis error:</strong> '
+        f'{html.escape(result.error_message)}</p>'
+        if result.error_message
+        else ""
     )
-
-
-def _best_representative(
-    representatives: list[UniqueSupportRepresentative],
-) -> UniqueSupportRepresentative | None:
-    if not representatives:
-        return None
-    return min(
-        representatives,
-        key=lambda representative: (
-            representative.mismatches,
-            -representative.support_count,
-            representative.signature,
-            representative.alignment.read_id,
-        ),
-    )
-
-
-def _render_html_support_block(
-    representative: UniqueSupportRepresentative,
-) -> str:
-    alignment = representative.alignment
-    reference_classes = _reference_tandem_classes(
-        alignment.aligned_reference,
-        representative.itd,
-    )
-    reference_html = _highlight_alignment_differences(
-        alignment.aligned_reference,
-        comparison_classes=reference_classes,
-    )
-    comparison_classes = _alignment_difference_classes(
-        alignment,
-        representative.itd,
-    )
-    read_html = _highlight_alignment_differences(
-        alignment.aligned_read,
-        comparison_classes=comparison_classes,
+    call_word = "call" if result.passing_call_count == 1 else "calls"
+    candidate_word = (
+        "candidate" if result.filtered_candidate_count == 1 else "candidates"
     )
     return (
-        '<section class="support">'
-        '<div class="representative-title">Representative alignment</div>'
-        f'<div class="support-header"><strong>{html.escape(alignment.read_id)}</strong></div>'
-        '<div class="alignment-block">'
-        f'<div class="alignment-row"><span class="label">reference  </span>{reference_html}</div>'
-        f'<div class="alignment-row"><span class="label">read       </span>{read_html}</div>'
-        '</div>'
-        f'{_render_insert_sequence_pileup(representative)}'
-        '</section>'
+        '<section class="sample-result">'
+        f'<div class="sample-name">Sample {html.escape(result.sample_id)}</div>'
+        f'<h2 class="outcome">{html.escape(result.outcome)}</h2>'
+        '<div class="status-row">'
+        f'<span class="status status--{html.escape(result.analysis_status)}">'
+        f'Analysis Status: {html.escape(result.analysis_status)}</span>'
+        f'<span class="status status--{html.escape(result.qc_status)}">'
+        f'QC Status: {html.escape(result.qc_status)}</span>'
+        "</div>"
+        f'<dl class="summary">{value_html}</dl>'
+        f"{qc_reasons}{error_message}"
+        f'<p class="note">{result.passing_call_count} passing {call_word}; '
+        f'{result.filtered_candidate_count} filtered {candidate_word}. '
+        "See the TSV output for full QC metrics, thresholds, and audit details.</p>"
+        "</section>"
     )
 
 
-def _render_insert_sequence_pileup(
-    representative: UniqueSupportRepresentative,
-) -> str:
-    if not representative.insert_sequence_supports:
-        return ""
+def _render_html_call_section(call: ITDCall, index: int) -> str:
+    insertion_label = "Insertion after reference base"
+    insertion_position = str(call.itd.insertion.start + 1)
+    if call.itd.insertion.start == -1:
+        insertion_label = "Insertion position"
+        insertion_position = "Before reference base 1"
 
-    rows = "".join(
+    summary = (
+        ("Inserted sequence", call.itd.insertion.sequence),
+        (insertion_label, insertion_position),
         (
-            "<tr>"
-            f"<td>{_highlight_inserted_sequence(support.sequence, representative.itd)}</td>"
-            f"<td>{support.mismatches}</td>"
-            f"<td>{support.support_count}</td>"
-            "</tr>"
+            "Copied reference bases",
+            f"{call.itd.copied_segment_start + 1}–{call.itd.copied_segment_end + 1}",
+        ),
+        ("Copied sequence", call.itd.copied_segment_sequence),
+        (
+            'Observed mutant-fragment fraction',
+            f"{call.observed_mutant_fragment_fraction:.1%}",
+        ),
+        ('Mutant fragments', str(call.mutant_fragment_count)),
+        ('Informative fragments', str(call.informative_fragment_count)),
+    )
+    summary_parts: list[str] = []
+    for label, value in summary:
+        css_class = (
+            ' class="sequence"'
+            if label in {"Inserted sequence", "Copied sequence"}
+            else ""
         )
-        for support in representative.insert_sequence_supports
-    )
+        summary_parts.append(
+            f"<div><dt>{html.escape(label)}</dt>"
+            f"<dd{css_class}>{html.escape(value)}</dd></div>"
+        )
+    summary_html = "".join(summary_parts)
     return (
-        '<div class="pileup">'
-        '<div class="pileup-title">Inserted sequence pileup</div>'
-        '<table class="pileup-table">'
-        '<thead><tr><th>Inserted sequence</th><th>Mismatches</th><th>Count</th></tr></thead>'
-        f"<tbody>{rows}</tbody>"
-        "</table>"
-        '</div>'
+        '<section class="itd">'
+        f'<h3>ITD {index}</h3>'
+        f'<dl class="summary">{summary_html}</dl>'
+        "</section>"
     )
-
-
-def _highlight_sequence_mismatches(observed: str, expected: str) -> str:
-    fragments: list[str] = []
-    for observed_base, expected_base in zip(observed, expected, strict=True):
-        escaped_base = html.escape(observed_base)
-        if observed_base == expected_base:
-            fragments.append(escaped_base)
-            continue
-        fragments.append(f'<span class="insert-mismatch">{escaped_base}</span>')
-    return "".join(fragments)
-
-
-def _highlight_inserted_sequence(sequence: str, itd: ITD) -> str:
-    fragments: list[str] = []
-    expected_sequence = _expected_insertion_sequence(itd)
-    prefix_length = len(itd.spacer_prefix)
-    tandem_length = len(itd.copied_segment_sequence)
-
-    for index, base in enumerate(sequence):
-        escaped_base = html.escape(base)
-        if index < prefix_length or index >= prefix_length + tandem_length:
-            css_class = "spacer-region"
-            if base != expected_sequence[index]:
-                css_class = "spacer-region insert-mismatch"
-            fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
-            continue
-
-        css_class = "inserted-region"
-        if base != expected_sequence[index]:
-            css_class = "inserted-region insert-mismatch"
-        fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
-
-    return "".join(fragments)
-
-
-def _highlight_alignment_differences(
-    sequence: str,
-    *,
-    comparison_classes: list[str | None] | None,
-) -> str:
-    fragments: list[str] = []
-    for index, base in enumerate(sequence):
-        escaped_base = html.escape(base)
-        css_class = None
-        if comparison_classes is not None and index < len(comparison_classes):
-            css_class = comparison_classes[index]
-        if css_class is not None:
-            fragments.append(f'<span class="{css_class}">{escaped_base}</span>')
-            continue
-        fragments.append(escaped_base)
-    return "".join(fragments)
-
-
-def _reference_tandem_classes(
-    aligned_reference: str,
-    itd,
-) -> list[str | None]:
-    classes: list[str | None] = []
-    ref_pos = -1
-
-    for ref_base in aligned_reference:
-        css_class = None
-        if ref_base != "-":
-            ref_pos += 1
-            if itd.copied_segment_start <= ref_pos <= itd.copied_segment_end:
-                css_class = "tandem-region"
-        classes.append(css_class)
-
-    return classes
 
 
 def _alignment_difference_classes(

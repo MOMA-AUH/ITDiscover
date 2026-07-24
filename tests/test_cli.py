@@ -11,8 +11,6 @@ from itdiscover.calls import (
     ConsolidatedAlleleMember,
     ITDCall,
     ITDConsolidationSettings,
-    InsertSequenceSupport,
-    UniqueSupportRepresentative,
 )
 from itdiscover.insertions import Alignment
 from itdiscover.insertions import Insertion
@@ -258,11 +256,11 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert passing["QC Status"] == "pass"
     assert passing["Insertion Sequence"] == "AGAGAATATGAATAT"
     insertion_coordinate = (
-        "Insertion After Reference Base (0-based; -1=before first)"
+        "Insertion After Reference Base (1-based; 0=before first)"
     )
-    assert passing[insertion_coordinate] == "78"
-    assert passing["Copied Segment Start (0-based)"] == "79"
-    assert passing["Copied Segment End (0-based, inclusive)"] == "93"
+    assert passing[insertion_coordinate] == "79"
+    assert passing["Copied Segment Start (1-based)"] == "80"
+    assert passing["Copied Segment End (1-based, inclusive)"] == "94"
     assert passing["Copied Segment Location"] == "immediately after insertion"
     assert passing["Mutant Fragment Count"] == "3"
     assert passing["Wild-type Fragment Count"] == "9"
@@ -270,6 +268,23 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert passing["Observed Mutant-fragment Fraction"] == "0.250000"
     assert filtered["Status"] == "FAIL"
     assert filtered["Filter Reasons"] == "LOW_MUTANT_FRAGMENT_COUNT"
+
+    html_report = html_path.read_text(encoding="utf-8")
+    assert "Sample synthetic-flt3" in html_report
+    assert "ITD detected" in html_report
+    assert "QC Status: pass" in html_report
+    assert "AGAGAATATGAATAT" in html_report
+    assert "Reference coordinates are 1-based" in html_report
+    assert "80–94" in html_report
+    assert "Copied segment location" not in html_report
+    assert "Observed mutant-fragment fraction" in html_report
+    assert "25.0%" in html_report
+    assert "Mutant fragments</dt><dd>3" in html_report
+    assert "Informative fragments</dt><dd>12" in html_report
+    assert "1 filtered candidate" in html_report
+    assert "Inserted sequence pileup" not in html_report
+    assert "Representative alignment" not in html_report
+    assert "CALL THRESHOLDS" not in html_report
 
 
 def test_call_command_reports_exact_itd_from_paired_fastq(tmp_path, capsys) -> None:
@@ -396,47 +411,14 @@ def test_call_command_reports_fuzzy_itd_from_paired_fastq(tmp_path, capsys) -> N
     report = report_path.read_text(encoding="utf-8")
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
-    assert "CALL THRESHOLDS" in report
-    assert "Min mutant fragments" in report
-    assert "Min informative fragments" in report
-    assert "Min mutant-fragment fraction" in report
-    assert "Max directional mutant-fraction share" in report
-    assert "Min opportunities per direction" in report
-    assert "Min insert length" in report
-    assert "Min copied-segment length" in report
-    assert "Require in-frame insertions" in report
-    assert "VAF" not in report
-    assert "Max copied-segment mismatch rate" in report
-    assert ">0.167<" in report
-    assert "Representative alignment" in report
-    assert "Concordant Fragments" in report
-    assert "Single-mate Fragments" in report
-    assert "Conflicting Fragments" in report
-    assert "Unresolved Fragments" in report
-    assert "Wild-type Fragments" in report
-    assert "Not-informative Fragments" in report
-    assert "R1 Evidence" in report
-    assert "R2 Evidence" in report
-    assert "50.0% (1/2 opportunities)" in report
-    assert "copied reference segment" in report
-    assert "inserted sequence" in report
-    assert "spacer sequence" in report
-    assert "mismatches" in report
-    assert "sky blue" not in report
-    assert "teal green" not in report
-    assert "orange" not in report
-    assert 'class="legend-chip tandem-region"' in report
-    assert 'class="tandem-region"' in report
-    assert 'class="inserted-region' in report
-    assert "<strong>itd-fragment/1</strong>" in report
-    assert '<div class="signature">' not in report
-    assert "mismatches 1" not in report
-    assert "support pattern count 1" not in report
-    assert '<span class="support-meta">fragment' not in report
-    assert "Inserted sequence pileup" in report
-    assert "<th>Inserted sequence</th><th>Mismatches</th><th>Count</th>" in report
-    assert "CCCGGG" in report
-    assert 'class="inserted-region insert-mismatch"' in report
+    assert "indeterminate" in report
+    assert "QC Status: fail" in report
+    assert "No passing ITD result is available" in report
+    assert "See the TSV output for full QC metrics, thresholds, and audit details" in report
+    assert "CALL THRESHOLDS" not in report
+    assert "Representative alignment" not in report
+    assert "Inserted sequence pileup" not in report
+    assert "<table" not in report
 
 
 def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None:
@@ -511,9 +493,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Filter Reasons",
         "Mode",
         "Max Copy Mismatch Rate",
-        "Insertion After Reference Base (0-based; -1=before first)",
-        "Copied Segment Start (0-based)",
-        "Copied Segment End (0-based, inclusive)",
+        "Insertion After Reference Base (1-based; 0=before first)",
+        "Copied Segment Start (1-based)",
+        "Copied Segment End (1-based, inclusive)",
         "Copied Segment Sequence",
         "Spacer Prefix",
         "Spacer Suffix",
@@ -604,9 +586,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     )
     assert rows[1][3] == "fuzzy"
     assert rows[1][4] == "0.166667"
-    assert rows[1][5] == "8"
-    assert rows[1][6] == "3"
-    assert rows[1][7] == "8"
+    assert rows[1][5] == "9"
+    assert rows[1][6] == "4"
+    assert rows[1][7] == "9"
     assert rows[1][8] == "CCCGGG"
     assert rows[1][11] == "CCCGGA"
     assert rows[1][14:20] == [
@@ -692,10 +674,10 @@ def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
 
     assert capsys.readouterr().out == ""
     report = html_path.read_text(encoding="utf-8")
-    assert "Sample Result and QC" in report
-    assert "negative" in report
+    assert "Sample negative" in report
+    assert "QC Status: pass" in report
     assert "no passing ITD detected" in report
-    assert "No ITD candidates were called." in report
+    assert "No passing ITD was detected." in report
     rows = list(
         csv.reader(tsv_path.read_text(encoding="utf-8").splitlines(), delimiter="\t")
     )
@@ -947,7 +929,7 @@ def test_call_command_rejects_multi_sequence_reference(tmp_path) -> None:
         )
 
 
-def test_call_command_writes_unique_support_alignment_html_report(tmp_path, capsys) -> None:
+def test_call_command_writes_concise_html_report(tmp_path, capsys) -> None:
     reference_path = tmp_path / "reference.fasta"
     reference_path.write_text(">FLT3\nTTTAAACCCGGGTTT\n", encoding="utf-8")
     report_path = tmp_path / "reports" / "unique-support.html"
@@ -1018,55 +1000,19 @@ def test_call_command_writes_unique_support_alignment_html_report(tmp_path, caps
     report = report_path.read_text(encoding="utf-8")
     assert "<title>ITDiscover Report</title>" in report
     assert "<h1>ITDiscover Report</h1>" in report
-    assert 'class="legend-chip diff"' in report
-    assert "copied reference segment" in report
-    assert "mismatches" in report
-    assert "sky blue" not in report
-    assert "teal green" not in report
-    assert "orange" not in report
-    assert "<h2>ITD 1</h2>" not in report
-    assert "<h2>ITD 2</h2>" not in report
-    assert "Insertion After Reference Base (0-based)" in report
-    assert "Copied Segment Start (0-based)" in report
-    assert "Copied Segment End (0-based, inclusive)" in report
-    assert "Copied Segment Location" in report
-    assert "Immediately after the insertion" in report
-    assert "Tandem Orientation" not in report
-    assert "Reference and Coordinates" in report
-    assert "Reference FASTA Header" in report
-    assert "Reference Sequence SHA-256" in report
-    assert cli.COORDINATE_CONVENTION in report
-    assert "Mutant Fragments" in report
-    assert "Observed Mutant-fragment Fraction" in report
-    assert "66.7% (2/3 informative fragments)" in report
-    assert "VAF" not in report
-    assert "support pattern count 1" not in report
-    assert "mismatches 0" not in report
-    assert '<div class="signature">' not in report
-    assert "Inserted sequence pileup" in report
-    assert "CCCGGG" in report
-    assert '<span class="diff">C</span>' in report
+    assert "indeterminate" in report
+    assert "No passing ITD result is available" in report
+    assert "Representative alignment" not in report
+    assert "Inserted sequence pileup" not in report
+    assert "Reference Sequence SHA-256" not in report
+    assert cli.COORDINATE_CONVENTION not in report
+    assert "Concordant Fragments" not in report
+    assert "R1 Evidence" not in report
+    assert "CALL THRESHOLDS" not in report
 
 
-def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path) -> None:
+def test_html_report_orders_itds_by_support_count_descending(tmp_path) -> None:
     report_path = tmp_path / "ordered-report.html"
-
-    higher_alignment = Alignment(
-        read_id="higher-read",
-        fragment_id="higher-fragment",
-        read_sequence="AAACCCGGGCCCGGGTTT",
-        aligned_reference="AAACCCGGG------TTT",
-        aligned_read="AAACCCGGGCCCGGGTTT",
-        direction="forward",
-    )
-    lower_alignment = Alignment(
-        read_id="lower-read",
-        fragment_id="lower-fragment",
-        read_sequence="AAACCCGGGTTT",
-        aligned_reference="AAACCCGGGTTT",
-        aligned_read="AAACCCGGGTTT",
-        direction="forward",
-    )
 
     higher_itd = ITD(
         insertion=Insertion(
@@ -1125,60 +1071,19 @@ def test_unique_support_report_orders_itds_by_support_count_descending(tmp_path)
             ),
         ),
     ]
-    representatives = [
-        UniqueSupportRepresentative(
-            itd=lower_itd,
-            signature="lower[sig]",
-            alignment=lower_alignment,
-            canonical_allele=CanonicalInsertionAllele(
-                start=8,
-                sequence="TTT",
-            ),
-            support_count=1,
-            exact_support_count=1,
-            mismatches=0,
-            insert_sequence_supports=(
-                InsertSequenceSupport(sequence="TTT", support_count=1, mismatches=0),
-            ),
-        ),
-        UniqueSupportRepresentative(
-            itd=higher_itd,
-            signature="higher[sig]",
-            alignment=higher_alignment,
-            canonical_allele=CanonicalInsertionAllele(
-                start=2,
-                sequence="CCCGGG",
-            ),
-            support_count=5,
-            exact_support_count=5,
-            mismatches=0,
-            insert_sequence_supports=(
-                InsertSequenceSupport(
-                    sequence="CCCGGG",
-                    support_count=5,
-                    mismatches=0,
-                ),
-            ),
-        ),
-    ]
-
-    cli._write_unique_support_alignment_html_report(
+    cli._write_html_report(
         report_path,
         calls,
-        representatives,
-        consolidation=ITDConsolidationSettings(enabled=True),
     )
 
     report = report_path.read_text(encoding="utf-8")
-    assert report.index("<strong>higher-read</strong>") < report.index(
-        "<strong>lower-read</strong>"
-    )
-    assert "Minor-variant consolidation</span>" in report
-    assert "Enabled</span>" in report
-    assert "sequence=CCCCGG" in report
-    assert "allele_mismatch_rate=0.166667" in report
-    assert "breakpoint_shift_rate=0.000000" in report
-    assert "same-breakpoint sequence error" in report
+    assert report.index("CCCGGG") < report.index("TTT")
+    assert "<h3>ITD 1</h3>" in report
+    assert "<h3>ITD 2</h3>" in report
+    assert "FLT3 internal tandem duplication" not in report
+    assert "Minor-variant consolidation" not in report
+    assert "sequence=CCCCGG" not in report
+    assert "Inserted sequence pileup" not in report
 
 
 def test_alignment_difference_classes_do_not_color_indels_yellow() -> None:
