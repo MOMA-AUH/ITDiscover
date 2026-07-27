@@ -44,16 +44,6 @@ from .results import (
 )
 
 
-COORDINATE_CONVENTION = (
-    "Reference-local, 1-based. Insertion coordinate is the reference base "
-    "immediately before the insertion (0 means before the first base). Copied "
-    "segment start and end are 1-based and inclusive. "
-    "The copied segment is immediately before the insertion when it ends at the "
-    "insertion coordinate, and immediately after when it starts at the following "
-    "reference base. Before/after describes this coordinate representation, not "
-    "a biological direction of copying."
-)
-
 FILTER_REASON_LABELS: dict[str, tuple[str, str]] = {
     "PARTIAL_OBSERVATION": (
         "PARTIAL",
@@ -1095,9 +1085,9 @@ def _write_tsv_call_report(
                 "Filter Reasons",
                 "Mode",
                 "Max Copy Mismatch Rate",
-                "Insertion After Reference Base (1-based; 0=before first)",
-                "Copied Segment Start (1-based)",
-                "Copied Segment End (1-based, inclusive)",
+                "Insertion After Reference Base",
+                "Copied Segment Start",
+                "Copied Segment End",
                 "Copied Segment Sequence",
                 "Spacer Prefix",
                 "Spacer Suffix",
@@ -1168,7 +1158,6 @@ def _write_tsv_call_report(
                 "Reference FASTA Header",
                 "Reference Length",
                 "Reference Sequence SHA-256",
-                "Coordinate Convention",
                 "Copied Segment Location",
                 "Min Insert Length",
                 "Min Copied Segment Length",
@@ -1278,7 +1267,6 @@ def _write_tsv_call_report(
                     reference_id or ".",
                     reference_length if reference_length is not None else ".",
                     reference_sha256 or ".",
-                    COORDINATE_CONVENTION,
                     f"immediately {call.itd.copied_segment_location} insertion",
                     min_insert_length,
                     min_copied_segment_length,
@@ -1332,7 +1320,6 @@ def _write_tsv_call_report(
                     reference_id or ".",
                     reference_length if reference_length is not None else ".",
                     reference_sha256 or ".",
-                    COORDINATE_CONVENTION,
                     ".",
                 ]
                 + [

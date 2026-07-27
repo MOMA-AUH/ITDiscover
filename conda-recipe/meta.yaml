@@ -31,6 +31,6 @@ test:
 
 about:
   home: https://github.com/MOMA-AUH/itdiscover
-  summary: Tool for discovering FLT3 ITDs from amplicon sequencing of AML samples
+  summary: Tool for discovering ITDs from amplicon sequencing
   license: MIT
   license_file: LICENSE

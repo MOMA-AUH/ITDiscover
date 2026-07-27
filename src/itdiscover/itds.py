@@ -49,7 +49,7 @@ class ITD:
 
     @property
     def spacer_sequence(self) -> str:
-        """Return the combined spacer sequence flanking the copied tract."""
+        """Return the combined spacer sequence flanking the copied segment."""
         return f"{self.spacer_prefix}{self.spacer_suffix}"
 
     @property
@@ -62,7 +62,7 @@ class ITD:
         """Return whether the ITD reaches a read edge and may be incomplete.
 
         A read-edge insertion lacks sequence on one side of the event.  Its
-        observed copied tract is useful evidence, but it cannot establish the
+        observed copied segment is useful evidence, but it cannot establish the
         full ITD length or sequence without other reconstruction evidence.
         """
         return self.insertion.trailing
@@ -107,8 +107,8 @@ def classify_exact_itd(
 ) -> ITD | None:
     """Classify an insertion as an adjacent exact tandem duplication.
 
-    The copied reference tract must be immediately before or after the
-    insertion site. Extra inserted bases may flank that copied tract and are
+    The copied reference segment must be immediately before or after the
+    insertion site. Extra inserted bases may flank that copied segment and are
     represented as spacer sequence.
     """
     return classify_fuzzy_itd(

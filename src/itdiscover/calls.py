@@ -227,7 +227,7 @@ class _CandidateObservation:
 
 
 # Exact observed ALT identity is independent of an aligner's arbitrary gap
-# placement and of the copied-tract/spacer annotation inferred from that gap.
+# placement and of the copied-segment/spacer annotation inferred from that gap.
 ITDCallKey = CanonicalInsertionAllele
 SupportRepresentativeMap = dict[ITDCallKey, dict[str, UniqueSupportRepresentative]]
 

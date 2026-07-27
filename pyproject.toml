@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "itdiscover"
 version = "0.4.0"
-description = "Tool for discovering FLT3 ITDs from amplicon sequencing of AML samples"
+description = "Tool for discovering ITDs from amplicon sequencing"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{name = "Michael Knudsen", email = "micknudsen@gmail.com"}]

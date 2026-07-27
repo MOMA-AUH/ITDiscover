@@ -256,12 +256,10 @@ def test_documented_flt3_example_has_expected_interpretation(
     assert passing["Outcome"] == "ITD detected"
     assert passing["QC Status"] == "pass"
     assert passing["Insertion Sequence"] == "AGAGAATATGAATAT"
-    insertion_coordinate = (
-        "Insertion After Reference Base (1-based; 0=before first)"
-    )
+    insertion_coordinate = "Insertion After Reference Base"
     assert passing[insertion_coordinate] == "79"
-    assert passing["Copied Segment Start (1-based)"] == "80"
-    assert passing["Copied Segment End (1-based, inclusive)"] == "94"
+    assert passing["Copied Segment Start"] == "80"
+    assert passing["Copied Segment End"] == "94"
     assert passing["Copied Segment Location"] == "immediately after insertion"
     assert passing["Mutant Fragment Count"] == "3"
     assert passing["Wild-type Fragment Count"] == "9"
@@ -506,9 +504,9 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Filter Reasons",
         "Mode",
         "Max Copy Mismatch Rate",
-        "Insertion After Reference Base (1-based; 0=before first)",
-        "Copied Segment Start (1-based)",
-        "Copied Segment End (1-based, inclusive)",
+        "Insertion After Reference Base",
+        "Copied Segment Start",
+        "Copied Segment End",
         "Copied Segment Sequence",
         "Spacer Prefix",
         "Spacer Suffix",
@@ -579,7 +577,6 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
         "Reference FASTA Header",
         "Reference Length",
         "Reference Sequence SHA-256",
-        "Coordinate Convention",
         "Copied Segment Location",
         "Min Insert Length",
         "Min Copied Segment Length",
@@ -629,17 +626,16 @@ def test_call_command_writes_tsv_summary_for_fuzzy_itd(tmp_path, capsys) -> None
     assert rows[1][69:75] == ["1", "0", "0", "0", "1", "0"]
     assert rows[1][75:77] == ["FLT3 exon 14-15 assay", "12"]
     assert rows[1][77] == hashlib.sha256(b"AAACCCGGGTTT").hexdigest()
-    assert rows[1][78] == cli.COORDINATE_CONVENTION
-    assert rows[1][79] == "immediately before insertion"
-    assert rows[1][80:83] == ["6", "6", "Yes"]
-    assert rows[1][83:88] == [
+    assert rows[1][78] == "immediately before insertion"
+    assert rows[1][79:82] == ["6", "6", "Yes"]
+    assert rows[1][82:87] == [
         "No",
         "0.125000",
         "1.000000",
         "0.050000",
         "3",
     ]
-    assert rows[1][88:] == ["0", "0", "."]
+    assert rows[1][87:] == ["0", "0", "."]
 
 
 def test_adequate_no_call_sample_is_reported_as_qc_passing_negative(
@@ -757,7 +753,7 @@ def test_cli_can_report_short_out_of_frame_tandem_when_explicitly_enabled(
     )
     assert rows[1][8] == "CCC"
     assert rows[1][11] == "CCCA"
-    assert rows[1][80:83] == ["4", "3", "No"]
+    assert rows[1][79:82] == ["4", "3", "No"]
 
 
 def test_analysis_error_report_is_indeterminate(tmp_path) -> None:
@@ -1018,7 +1014,6 @@ def test_call_command_writes_concise_html_report(tmp_path, capsys) -> None:
     assert "Representative alignment" not in report
     assert "Inserted sequence pileup" not in report
     assert "Reference Sequence SHA-256" not in report
-    assert cli.COORDINATE_CONVENTION not in report
     assert "Concordant Fragments" not in report
     assert "R1 Evidence" not in report
     assert "CALL THRESHOLDS" not in report
