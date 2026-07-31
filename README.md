@@ -1,6 +1,6 @@
 # ITDiscover
 
-[![Conda Version](https://img.shields.io/conda/vn/MOMA-AUH/itdiscover?cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover) [![Conda Downloads](https://img.shields.io/conda/dn/MOMA-AUH/itdiscover?cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover)
+[![Conda Version](https://img.shields.io/conda/vn/MOMA-AUH/itdiscover?style=for-the-badge&cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover) [![Conda Downloads](https://img.shields.io/conda/dn/MOMA-AUH/itdiscover?style=for-the-badge&cacheSeconds=300)](https://anaconda.org/MOMA-AUH/itdiscover)
 
 ITDiscover discovers internal tandem duplications (ITDs) from paired-end
 amplicon sequencing reads.
